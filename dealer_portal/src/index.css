@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #2563eb;
+  --color-danger:  #dc2626;
+  --color-warning: #d97706;
+  --color-success: #16a34a;
+}
+
+body {
+  @apply bg-slate-50 text-gray-900 font-sans;
+}
+
+.card {
+  @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6;
+}
+
+/* Gauge ring animation */
+@keyframes gauge-fill {
+  from { stroke-dashoffset: 251.2; }
+}
+.gauge-ring {
+  animation: gauge-fill 0.8s ease-out forwards;
+  transform-origin: center;
+  transform: rotate(-90deg);
+}
+
+/* Toast slide-in */
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out forwards;
+}

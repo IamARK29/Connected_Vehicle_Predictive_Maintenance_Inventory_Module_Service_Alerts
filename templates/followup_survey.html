@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>How Was Your Service?</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px}
+  .card{background:#fff;max-width:600px;margin:auto;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .header{background:#1a73e8;color:#fff;padding:24px;text-align:center}
+  .body{padding:24px}
+  .stars{display:flex;justify-content:center;gap:12px;margin:24px 0}
+  .star-btn{display:inline-block;font-size:36px;text-decoration:none;cursor:pointer}
+  .question{font-size:14px;color:#555;margin-bottom:10px}
+  .checkbox-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:14px;color:#333}
+  .btn{display:block;background:#1a73e8;color:#fff;text-decoration:none;padding:14px;border-radius:6px;font-size:15px;font-weight:bold;text-align:center;margin-top:20px}
+  .skip{display:block;text-align:center;margin-top:12px;font-size:13px;color:#888;text-decoration:none}
+  .footer{border-top:1px solid #eee;padding:14px 24px;font-size:12px;color:#888;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <h1 style="margin:0;font-size:22px">How Was Your Service?</h1>
+    <p style="margin:6px 0 0;opacity:.9">{{ vehicle.get('model_name','') }} — {{ vehicle.get('license_plate','') }} · {{ service_date }}</p>
+  </div>
+  <div class="body">
+    <p style="text-align:center;color:#555;margin-top:0">Your feedback helps us improve. It takes less than 1 minute.</p>
+
+    <p style="text-align:center;font-weight:bold;color:#333;margin-bottom:4px">Overall experience</p>
+    <div class="stars">
+      {% for i in range(1, 6) %}
+      <a href="https://autopredict.in/survey/{{ survey_token }}?rating={{ i }}" class="star-btn">⭐</a>
+      {% endfor %}
+    </div>
+
+    <p class="question"><strong>What went well? (optional)</strong></p>
+    {% for item in positive_options %}
+    <div class="checkbox-row">
+      <input type="checkbox" id="pos_{{ loop.index }}" name="positive" value="{{ item }}">
+      <label for="pos_{{ loop.index }}">{{ item }}</label>
+    </div>
+    {% endfor %}
+
+    <p class="question" style="margin-top:16px"><strong>What could be better? (optional)</strong></p>
+    {% for item in improve_options %}
+    <div class="checkbox-row">
+      <input type="checkbox" id="imp_{{ loop.index }}" name="improve" value="{{ item }}">
+      <label for="imp_{{ loop.index }}">{{ item }}</label>
+    </div>
+    {% endfor %}
+
+    <a href="https://autopredict.in/survey/{{ survey_token }}" class="btn">Submit Feedback</a>
+    <a href="https://autopredict.in/survey/{{ survey_token }}?skip=1" class="skip">Skip survey</a>
+  </div>
+  <div class="footer">AutoPredict by MG Motor India · <a href="https://autopredict.in/unsubscribe">Unsubscribe</a></div>
+</div>
+</body>
+</html>

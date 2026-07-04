@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Appointment Confirmed</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px}
+  .card{background:#fff;max-width:600px;margin:auto;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .header{background:#1a73e8;color:#fff;padding:20px 24px}
+  .header h1{margin:0;font-size:20px}
+  .body{padding:24px}
+  .appt-box{background:#e3f2fd;border-radius:8px;padding:20px;margin-bottom:20px}
+  .appt-row{display:flex;justify-content:space-between;margin-bottom:8px;font-size:14px}
+  .appt-row .label{color:#666}
+  .appt-row .value{font-weight:bold;color:#333}
+  .id-badge{background:#1a73e8;color:#fff;font-size:24px;font-weight:bold;padding:10px 20px;border-radius:6px;text-align:center;letter-spacing:2px;margin-bottom:20px}
+  .tip-box{background:#fff8e1;border-left:4px solid #f9a825;padding:12px 16px;font-size:13px;color:#555;border-radius:4px;margin-bottom:16px}
+  .footer{border-top:1px solid #eee;padding:16px 24px;font-size:12px;color:#888;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <h1>✓ Service Appointment Confirmed</h1>
+  </div>
+  <div class="body">
+    <div class="id-badge">{{ appointment.appointment_id }}</div>
+
+    <div class="appt-box">
+      <div class="appt-row"><span class="label">Vehicle</span><span class="value">{{ vehicle.get('model_name','') }} — {{ vehicle.get('license_plate', appointment.vin) }}</span></div>
+      <div class="appt-row"><span class="label">Date</span><span class="value">{{ appointment.date }}</span></div>
+      <div class="appt-row"><span class="label">Time</span><span class="value">{{ appointment.time }}</span></div>
+      <div class="appt-row"><span class="label">Dealer</span><span class="value">{{ appointment.dealer_name | default(appointment.dealer_code) }}</span></div>
+      <div class="appt-row"><span class="label">Service Bay</span><span class="value">{{ appointment.bay_id }}</span></div>
+      <div class="appt-row"><span class="label">Service Type</span><span class="value">{{ appointment.job_type | replace('_',' ') | title }}</span></div>
+      <div class="appt-row"><span class="label">Est. Duration</span><span class="value">{{ appointment.duration_hours }} hour(s)</span></div>
+    </div>
+
+    <div class="tip-box">
+      <strong>Reminder:</strong> Please arrive 10 minutes early. Bring your vehicle registration and insurance documents.
+    </div>
+
+    {% if cost %}
+    <p style="font-size:13px;color:#555">
+      <strong>Estimated cost:</strong>
+      ₹{{ "{:,.0f}".format(cost.total_min) }} – ₹{{ "{:,.0f}".format(cost.total_max) }} (INR incl. GST)
+      {% if cost.warranty_likely %} &nbsp;·&nbsp; <span style="color:#388e3c;font-weight:bold">Warranty likely applicable</span>{% endif %}
+    </p>
+    {% endif %}
+  </div>
+  <div class="footer">AutoPredict by MG Motor India · To cancel: autopredict.in/cancel/{{ appointment.appointment_id }}</div>
+</div>
+</body>
+</html>

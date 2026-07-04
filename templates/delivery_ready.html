@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Vehicle Ready for Pickup</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px}
+  .card{background:#fff;max-width:600px;margin:auto;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .header{background:#2e7d32;color:#fff;padding:24px;text-align:center}
+  .checkmark{font-size:48px;margin-bottom:8px}
+  .body{padding:24px}
+  .summary-box{background:#f1f8e9;border-radius:8px;padding:16px;margin-bottom:20px}
+  .row{display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px}
+  .row .label{color:#666}
+  .row .value{font-weight:bold;color:#333}
+  .cost-total{font-size:22px;font-weight:bold;color:#2e7d32;text-align:right;margin-top:10px}
+  .btn{display:block;background:#2e7d32;color:#fff;text-decoration:none;padding:14px 24px;border-radius:6px;font-size:15px;font-weight:bold;text-align:center;margin-top:20px}
+  .footer{border-top:1px solid #eee;padding:14px 24px;font-size:12px;color:#888;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="checkmark">✅</div>
+    <h1 style="margin:0;font-size:22px">Your Vehicle is Ready!</h1>
+    <p style="margin:6px 0 0;opacity:.9">{{ vehicle.get('model_name','') }} — {{ vehicle.get('license_plate','') }}</p>
+  </div>
+  <div class="body">
+    <p>Your vehicle has been serviced and is ready for pickup at <strong>{{ dealer_name }}</strong>.</p>
+
+    <div class="summary-box">
+      <div class="row"><span class="label">Services Performed</span></div>
+      {% for svc in services_performed %}
+      <div class="row"><span class="label" style="padding-left:12px">· {{ svc }}</span></div>
+      {% endfor %}
+      {% if parts_replaced %}
+      <div class="row" style="margin-top:10px"><span class="label">Parts Replaced</span></div>
+      {% for part in parts_replaced %}
+      <div class="row"><span class="label" style="padding-left:12px">· {{ part }}</span></div>
+      {% endfor %}
+      {% endif %}
+      <hr style="border:none;border-top:1px solid #c8e6c9;margin:12px 0">
+      {% if warranty_applied %}
+      <div class="row"><span class="label">Warranty Coverage</span><span class="value" style="color:#388e3c">Applied</span></div>
+      {% endif %}
+      <div class="row"><span class="label">Amount Payable</span></div>
+      <div class="cost-total">₹{{ "{:,.0f}".format(final_amount) }}</div>
+    </div>
+
+    <p style="font-size:13px;color:#555">Please bring a valid ID to collect your vehicle. Dealer hours: Mon–Sat 9:00 AM – 6:00 PM.</p>
+    <a href="https://autopredict.in/invoice/{{ appointment_id }}" class="btn">View Invoice</a>
+  </div>
+  <div class="footer">AutoPredict by MG Motor India</div>
+</div>
+</body>
+</html>

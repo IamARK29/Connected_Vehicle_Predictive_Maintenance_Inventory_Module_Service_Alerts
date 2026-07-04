@@ -1,0 +1,5 @@
+vin,failure_type,injection_date,failure_date,affected_component
+MZ7XZSN00100002,12v_battery_failure,2024-12-12,2024-12-26,
+MZ7XGLP00100013,tyre_puncture,2024-08-06,2024-08-06,FL
+MZ7XZSN00100018,tyre_puncture,2024-11-17,2024-11-17,RL
+MZ7XHEM00100021,tyre_puncture,2024-10-02,2024-10-02,FL

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Parts Pre-Order</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px}
+  .card{background:#fff;max-width:600px;margin:auto;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .header{background:#388e3c;color:#fff;padding:20px 24px}
+  .body{padding:24px}
+  table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px}
+  th{background:#f5f5f5;padding:10px 12px;text-align:left;color:#666;font-weight:600;border-bottom:2px solid #ddd}
+  td{padding:10px 12px;border-bottom:1px solid #eee}
+  .in-stock{color:#2e7d32;font-weight:bold}
+  .on-order{color:#e65100;font-weight:bold}
+  .footer{border-top:1px solid #eee;padding:14px 24px;font-size:12px;color:#888;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <h1 style="margin:0;font-size:20px">Parts Pre-Ordered for Your Service</h1>
+    <p style="margin:4px 0 0;opacity:.9;font-size:13px">Appointment: {{ appointment.appointment_id }} on {{ appointment.date }}</p>
+  </div>
+  <div class="body">
+    <p>We have pre-ordered the following parts for your {{ vehicle.get('model_name','vehicle') }} ({{ vehicle.get('license_plate', appointment.vin) }}) to ensure your service is completed promptly.</p>
+    <table>
+      <thead>
+        <tr><th>Part</th><th>Code</th><th>Status</th><th>ETA</th></tr>
+      </thead>
+      <tbody>
+        {% for part_code, part in parts.items() %}
+        <tr>
+          <td>{{ part_code | replace('-',' ') | title }}</td>
+          <td style="font-family:monospace;font-size:12px">{{ part_code }}</td>
+          <td class="{% if part.in_stock %}in-stock{% else %}on-order{% endif %}">
+            {% if part.in_stock %}In Stock ({{ part.qty }}){% else %}On Order{% endif %}
+          </td>
+          <td>{% if part.in_stock %}Ready{% else %}{{ part.eta_days }} day(s){% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p style="font-size:13px;color:#555">All parts will be ready at the dealer before your appointment. No action required.</p>
+  </div>
+  <div class="footer">AutoPredict by MG Motor India</div>
+</div>
+</body>
+</html>

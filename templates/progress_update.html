@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Service Progress Update</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px}
+  .card{background:#fff;max-width:600px;margin:auto;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .header{background:#5c6bc0;color:#fff;padding:20px 24px}
+  .body{padding:24px}
+  .progress-track{display:flex;flex-direction:column;gap:0}
+  .step{display:flex;gap:14px;padding:10px 0}
+  .step-dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;margin-top:3px}
+  .step-dot.done{background:#388e3c}
+  .step-dot.active{background:#1a73e8;box-shadow:0 0 0 3px rgba(26,115,232,.3)}
+  .step-dot.pending{background:#ccc}
+  .step-label{font-size:14px}
+  .step-label .name{font-weight:bold;color:#333}
+  .step-label .time{font-size:12px;color:#888;margin-top:2px}
+  .footer{border-top:1px solid #eee;padding:14px 24px;font-size:12px;color:#888;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <h1 style="margin:0;font-size:20px">Service Update — {{ vehicle.get('license_plate', vin) }}</h1>
+    <p style="margin:4px 0 0;opacity:.9;font-size:13px">{{ vehicle.get('model_name','') }} · Appointment {{ appointment_id }}</p>
+  </div>
+  <div class="body">
+    <p style="color:#555;margin-top:0">Here is the current status of your vehicle service:</p>
+    <div class="progress-track">
+      {% for step in steps %}
+      <div class="step">
+        <div class="step-dot {{ step.status }}"></div>
+        <div class="step-label">
+          <div class="name">{{ step.name }}</div>
+          {% if step.time %}<div class="time">{{ step.time }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if eta %}
+    <p style="margin-top:20px;font-size:14px;color:#333">
+      <strong>Estimated completion:</strong> {{ eta }}
+    </p>
+    {% endif %}
+    {% if note %}
+    <div style="background:#fff8e1;border-left:4px solid #f9a825;padding:12px 16px;font-size:13px;border-radius:4px;margin-top:16px">
+      <strong>Note from technician:</strong> {{ note }}
+    </div>
+    {% endif %}
+  </div>
+  <div class="footer">AutoPredict by MG Motor India</div>
+</div>
+</body>
+</html>

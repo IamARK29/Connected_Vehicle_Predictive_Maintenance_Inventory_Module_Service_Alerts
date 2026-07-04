@@ -1,0 +1,41 @@
+dtc_code,system,component,description,serious_level_typical,likely_failure_mode,recommended_action,typical_parts_needed,estimated_labour_hours,estimated_cost_inr,safety_critical
+P0562,Powertrain,12V Battery / Charging System,System Voltage Low,2,Weak 12V battery or alternator failure,Test battery and charging system; replace if below spec,12V Battery,1.5,6500,True
+P0300,Powertrain,Engine - Ignition,Random/Multiple Cylinder Misfire Detected,2,Fouled spark plugs or failing ignition coil,Replace spark plugs; test ignition coils; check fuel injectors,Spark Plugs / Ignition Coil,2.0,4500,False
+P0117,Powertrain,Engine Coolant Temperature Sensor,Engine Coolant Temperature Circuit Low Input,1,Failed ECT sensor or wiring short,Replace ECT sensor; inspect wiring harness,ECT Sensor,1.0,2800,False
+P0172,Powertrain,Fuel System,System Too Rich (Bank 1),1,Fuel injector leaking or O2 sensor fault,Inspect fuel injectors; replace faulty O2 sensor; check MAF sensor,Fuel Injector / O2 Sensor,2.5,5500,False
+P0101,Powertrain,Mass Air Flow Sensor,Mass Air Flow Circuit Range/Performance,1,Dirty or failing MAF sensor,Clean or replace MAF sensor; check air filter,MAF Sensor,1.0,3500,False
+P0340,Powertrain,Camshaft Position Sensor,Camshaft Position Sensor Circuit Malfunction (Bank 1),2,Failed camshaft position sensor,Replace camshaft position sensor; inspect timing chain,Camshaft Position Sensor,1.5,4200,False
+P0420,Powertrain,Catalytic Converter,Catalyst System Efficiency Below Threshold (Bank 1),1,Degraded catalytic converter or O2 sensor fault,Inspect catalytic converter; replace if below efficiency threshold,Catalytic Converter,2.0,18000,False
+P0171,Powertrain,Fuel System,System Too Lean (Bank 1),1,Vacuum leak or failing fuel pump,Check for vacuum leaks; test fuel pressure; inspect MAF sensor,Fuel Injector / Vacuum Hose,2.0,4000,False
+P0128,Powertrain,Engine Cooling System,Coolant Temperature Below Thermostat Regulating Temperature,1,Stuck-open thermostat,Replace thermostat; inspect coolant level,Thermostat,1.0,2500,False
+P0507,Powertrain,Idle Control System,Idle Control System RPM High,1,Dirty throttle body or IAC valve failure,Clean throttle body; replace IAC valve if needed,IAC Valve,1.5,3800,False
+P0A80,EV/HV,HV Battery Pack,Replace Hybrid/EV Battery Pack,3,Severe HV battery cell degradation (SOH < 70%),Full battery pack inspection; possible replacement,HV Battery Pack,8.0,250000,True
+P0A09,EV/HV,DC/DC Converter,DC/DC Converter Performance,2,DC/DC converter efficiency degradation,Test and replace DC/DC converter,DC/DC Converter,3.0,35000,True
+P1E00,EV/HV,HV Battery Thermal Management,Battery Pack Thermal Runaway Risk,3,Thermal management failure; risk of thermal runaway,Immediate vehicle shutdown; HV battery inspection; do not charge,HV Battery Pack / Cooling System,10.0,300000,True
+P0B32,EV/HV,HV Battery - Cell Voltage,HV Battery Cell Voltage Imbalance,2,Cell balancing failure or degraded cells,BMS inspection; cell balancing or module replacement,BMS Module / Battery Cells,4.0,85000,True
+P0C16,EV/HV,Traction Motor,Traction Motor Performance Degraded,2,Motor winding degradation or inverter fault,Motor and inverter inspection; replace if necessary,Traction Motor / Inverter,6.0,120000,False
+P0D32,EV/HV,Regenerative Braking,Regenerative Braking System Fault,1,Inverter or regen control fault,Inspect inverter and regen control module,Inverter Module,3.0,45000,False
+P0AA6,EV/HV,HV Battery Isolation,HV Battery Pack Isolation Fault,3,Insulation breakdown in HV circuit,Immediate inspection of HV wiring and battery isolation,HV Wiring / Insulation,5.0,40000,True
+P0C79,EV/HV,Charging System,On-Board Charger Fault,2,OBC module failure,Test and replace on-board charger,On-Board Charger,3.0,55000,False
+C0040,Chassis,Brake System - Front Right,Right Front Wheel Speed Sensor Circuit Fault,2,Failed wheel speed sensor or ABS ring damage,Replace wheel speed sensor; inspect ABS tone ring,Wheel Speed Sensor,1.5,3500,True
+C0035,Chassis,Brake System - Front Left,Left Front Wheel Speed Sensor Circuit Fault,2,Failed wheel speed sensor or ABS ring damage,Replace wheel speed sensor; inspect ABS tone ring,Wheel Speed Sensor,1.5,3500,True
+C0036,Chassis,Brake System - Rear Right,Right Rear Wheel Speed Sensor Circuit Fault,2,Failed wheel speed sensor or ABS ring damage,Replace wheel speed sensor; inspect ABS tone ring,Wheel Speed Sensor,1.5,3500,True
+C0045,Chassis,Brake System - Rear Left,Left Rear Wheel Speed Sensor Circuit Fault,2,Failed wheel speed sensor or ABS ring damage,Replace wheel speed sensor; inspect ABS tone ring,Wheel Speed Sensor,1.5,3500,True
+C0046,Chassis,ABS Control Module,ABS Control Module Internal Fault,3,ABS module hardware failure,Replace ABS control module; bleed brake system,ABS Control Module,3.0,22000,True
+C0110,Chassis,Brake Fluid Level,Brake Fluid Level Low,2,Brake fluid leak or worn brake pads,Inspect brake lines for leaks; check brake pad thickness; refill fluid,Brake Fluid / Brake Pads,1.0,2500,True
+C0775,Chassis / TPMS,TPMS - Front Right,Tire Pressure Monitor Sensor - Front Right Fault,1,Low tyre pressure or failed TPMS sensor,Check and inflate tyre; replace TPMS sensor if needed,TPMS Sensor,0.5,2200,False
+C0776,Chassis / TPMS,TPMS - Front Left,Tire Pressure Monitor Sensor - Front Left Fault,1,Low tyre pressure or failed TPMS sensor,Check and inflate tyre; replace TPMS sensor if needed,TPMS Sensor,0.5,2200,False
+C0777,Chassis / TPMS,TPMS - Rear Right,Tire Pressure Monitor Sensor - Rear Right Fault,1,Low tyre pressure or failed TPMS sensor,Check and inflate tyre; replace TPMS sensor if needed,TPMS Sensor,0.5,2200,False
+C0778,Chassis / TPMS,TPMS - Rear Left,Tire Pressure Monitor Sensor - Rear Left Fault,1,Low tyre pressure or failed TPMS sensor,Check and inflate tyre; replace TPMS sensor if needed,TPMS Sensor,0.5,2200,False
+B1000,Body,Body Control Module,Body Control Module Internal Fault,2,BCM hardware or software failure,Reprogram or replace BCM,BCM Module,2.0,18000,False
+B1001,Body,Body Control Module,BCM Configuration Mismatch,1,Incorrect BCM configuration after replacement,Reprogram BCM with correct vehicle configuration,BCM Module,1.0,5000,False
+B2200,Body,Interior Lighting,Interior Lighting Circuit Fault,1,Blown fuse or failed lighting module,Inspect and replace fuse; check lighting wiring,Fuse / Lighting Module,0.5,1500,False
+B2201,Body,Power Windows,Power Window Control Circuit Fault,1,Failed window regulator motor or switch,Test window motor and switch; replace faulty component,Window Motor / Switch,1.5,4500,False
+U0100,Network,CAN Bus - Engine ECM,Lost Communication with ECM,3,CAN bus failure or ECM power loss,Inspect CAN bus wiring; test ECM power supply; replace ECM if needed,ECM / CAN Bus Wiring,3.0,45000,True
+U0155,Network,CAN Bus - Instrument Cluster,Lost Communication with Instrument Panel Cluster,2,CAN bus or cluster module failure,Inspect CAN wiring; replace instrument cluster,Instrument Cluster,2.0,15000,False
+U0416,Network,CAN Bus - ADAS,Invalid Data Received from Vehicle Dynamics Control Module,2,CAN message corruption or module fault,Inspect CAN bus; reprogram or replace VDC module,VDC Module,2.5,28000,False
+U0121,Network,CAN Bus - ABS,Lost Communication with Anti-Lock Brake System Control Module,3,ABS module CAN failure,Inspect CAN wiring to ABS; replace ABS module,ABS Module / CAN Wiring,2.0,22000,True
+U0073,Network,CAN Bus,CAN Bus Off - Communication Bus,3,Widespread CAN bus failure or shorted line,Full CAN network scan; replace shorted node,CAN Bus Nodes,4.0,35000,True
+P0A1F,EV/HV,HV Battery - SOH,Battery Energy Level Low (SOH Degradation),2,HV battery age and cycle degradation,Battery SOH assessment; inform customer of expected range reduction,HV Battery Pack,2.0,15000,False
+P0C4D,EV/HV,Traction Motor Controller,Traction Motor Controller Temperature High,2,Motor controller overheating due to cooling failure,Inspect motor cooling system; check coolant pump and flow,Coolant Pump / Motor Controller,2.0,28000,False
+B1600,Body,Keyless Entry,Keyless Entry / PEPS System Fault,1,Failed PEPS module or antenna,Diagnose PEPS module; replace antenna or module,PEPS Module / Antenna,1.5,8500,False
