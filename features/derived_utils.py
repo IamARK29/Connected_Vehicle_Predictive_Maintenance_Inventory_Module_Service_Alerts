@@ -1,4 +1,4 @@
-"""
+﻿"""
 Derived telemetry parameter utilities for AutoPredict feature pipelines.
 
 All functions accept DataFrames with either Big Data Spec raw column names
@@ -22,6 +22,8 @@ _COL_MAP: dict[str, list[str]] = {
     "vehBrakePos":           ["vehBrakePos", "VehBrakePos", "brake_pos"],
     "vehSpeed":              ["vehSpeed", "VehSpeed", "speed"],
     "tboxAccelX":            ["tboxAccelX", "VehAccelX", "accel_x"],
+    "tboxAccelY":            ["tboxAccelY", "accel_y"],
+    "tboxAccelZ":            ["tboxAccelZ", "accel_z"],
     "vehSysPwrMod":          ["vehSysPwrMod", "VehSysPwrMod", "sys_pwr_mod"],
     "vehAccelPos":           ["vehAccelPos", "VehAccelPos", "accel_pos"],
     "vehRPM":                ["vehRPM", "VehRPM", "rpm"],
@@ -336,3 +338,4 @@ def correct_tyre_pressure_for_temp(
         pressure_kpa * (273.15 + reference_temp_c) / (273.15 + outside_temp_c),
         2,
     )
+

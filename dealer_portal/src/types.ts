@@ -35,7 +35,7 @@ export interface Alert {
   estimated_cost_min: number
   estimated_cost_max: number
   confidence_score: number
-  model_version: string
+  model_version?: string
   triggered_at: string
 }
 
@@ -45,6 +45,8 @@ export interface MLPrediction {
   days_until?: number
   severity: string
   confidence: number
+  value?: number
+  message?: string
   raw: Record<string, unknown>
 }
 
@@ -75,6 +77,14 @@ export interface InventoryItem {
   in_stock: boolean
   qty: number
   reorder_qty: number
+  unit_cost_inr?: number
+  reorder_point?: number
+  safety_stock?: number
+  abc_class?: string
+  lead_time_days?: number
+  supplier?: string
+  monthly_demand_avg?: number
+  days_until_stockout?: number | null
 }
 
 export interface DemandForecast {
@@ -83,11 +93,17 @@ export interface DemandForecast {
   demand_30d: number
   demand_90d: number
   confidence?: number
+  historical_monthly_avg?: number
+  alert_contribution?: number
+  forecast_method?: string
+  demand_trend?: string
+  days_until_stockout?: number | null
 }
 
 export interface DriverScore {
   vin: string
   license_plate: string
+  driver_name?: string
   score: number
   risk_category: string
   rank?: number

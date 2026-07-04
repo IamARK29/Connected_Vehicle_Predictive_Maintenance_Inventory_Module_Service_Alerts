@@ -46,7 +46,8 @@ class TyreFeaturePipeline(FeaturePipeline):
         odo     = df["odometer"]                  if "odometer"    in df.columns else pd.Series(dtype=float)
         speed30 = d30["speed"].fillna(0)          if "speed"       in d30.columns else pd.Series(dtype=float)
         bpos30  = d30["brake_pos"].fillna(0)      if "brake_pos"   in d30.columns else pd.Series(dtype=float)
-        ax30    = d30["accel_x"].fillna(0)        if "accel_x"     in d30.columns else pd.Series(dtype=float)
+        ax30    = d30["accel_x"].fillna(0)        if "accel_x"       in d30.columns else pd.Series(dtype=float)
+        ay30    = d30["accel_y"].fillna(0)        if "accel_y"       in d30.columns else pd.Series(dtype=float)
         steer30 = d30["steering_angle"].fillna(0) if "steering_angle" in d30.columns else pd.Series(dtype=float)
 
         features: dict[str, Any] = {}
@@ -99,12 +100,16 @@ class TyreFeaturePipeline(FeaturePipeline):
         harsh_brake_per_100km_30d = self._rate_per_100km(harsh_brake_mask.to_numpy(), odo30)
 
         # ── Lateral G 95th percentile (30d) ────────────────────────────────
-        # Use steering angle rate as lateral G proxy (no accelY in synthetic data)
-        steer_rate = steer30.diff().abs()
-        lateral_g_95th_30d = float(np.nanpercentile(steer_rate, 95)) if len(steer_rate) > 0 else np.nan
+        # Use real tboxAccelY if available; fall back to steering angle rate proxy
+        if ay30.abs().max() > 0.01:
+            lateral_g_95th_30d = float(np.nanpercentile(ay30.abs(), 95)) if len(ay30) > 0 else np.nan
+            sudden_turn_mask   = (ay30.abs() > 0.3).to_numpy()  # > 0.3g = sudden turn
+        else:
+            steer_rate         = steer30.diff().abs()
+            lateral_g_95th_30d = float(np.nanpercentile(steer_rate, 95)) if len(steer_rate) > 0 else np.nan
+            sudden_turn_mask   = (steer_rate > 30).to_numpy()
 
         # ── Sudden turns per 100km (30d) ───────────────────────────────────
-        sudden_turn_mask = (steer_rate > 30).to_numpy()
         sudden_turn_per_100km_30d = self._rate_per_100km(sudden_turn_mask, odo30)
 
         # ── ESC activations per 100km (30d) ───────────────────────────────
@@ -113,7 +118,8 @@ class TyreFeaturePipeline(FeaturePipeline):
         # ── km since last tyre service ─────────────────────────────────────
         km_since_last_tyre_service = float(odo.iloc[-1] - last_tyre_service_odo) if (
             last_tyre_service_odo is not None and len(odo) > 0
-        ) else 0.0
+        ) else (float(odo.iloc[-1]) % 40_000.0 if len(odo) > 0 else 0.0)
+        # When service history unknown, modulo 40k simulates position in current tyre lifecycle
 
         # ── Average speed 30d ─────────────────────────────────────────────
         driving_mask = speed30 > 5
@@ -124,14 +130,54 @@ class TyreFeaturePipeline(FeaturePipeline):
             col = f"tyre_{pos}"
             features[f"{pos}_current"] = float(df[col].iloc[-1]) if col in df.columns else np.nan
 
-        # ── TPMS status ────────────────────────────────────────────────────
-        # Not in synthetic data; 0 = normal
-        features["tpms_status"] = 0
+        # ── TPMS status from real wheelTyreMonitorStatus signal ──────────
+        # 0=OK, 1=Deflation Warning, 4=System Fault, 5=Sensor N/A
+        if "tpms_status" in df.columns:
+            tpms_mode = int(df["tpms_status"].fillna(0).mode().iloc[0])
+            tpms_deflation_count = int((df["tpms_status"].fillna(0) == 1).sum())
+        else:
+            tpms_mode            = 0
+            tpms_deflation_count = 0
+        features["tpms_status"]            = tpms_mode
+        features["tpms_deflation_count"]   = tpms_deflation_count
 
-        # ── Labels ────────────────────────────────────────────────────────
-        days_to_failure, within_30 = self._label_days_to_failure(
+        # ── Blast risk score: low pressure + high speed ────────────────────
+        # Risk = speed × max(0, target_kpa - current_kpa) / 1000
+        target_kpa  = 230.0
+        min_p_7d    = float(np.nanmin([features.get(f"pressure_{p}_7d_avg", np.nan) for p in _POSITIONS]) or target_kpa)
+        blast_risk  = float(speed30.fillna(0).mean() * max(0, target_kpa - min_p_7d) / 1000)
+        features["tyre_blast_risk_score"] = round(blast_risk, 4)
+
+        # ── Labels — physics-based self-supervision + service event ─────────
+        # Physics: warn when any corner drops below 195 kPa (normal ~226-232 kPa).
+        # Extrapolate using worst-corner 14d trend to predict days to threshold.
+        _PRESSURE_WARN_KPA = 195.0
+        worst_drop_rate = min(
+            float(features.get(f"pressure_{p}_trend_14d", 0.0) or 0.0)
+            for p in _POSITIONS
+        )
+        if worst_drop_rate < -0.01:
+            days_to_physics = float(np.clip(
+                (min_p_7d - _PRESSURE_WARN_KPA) / abs(worst_drop_rate), 0, 365
+            ))
+        else:
+            days_to_physics = 365.0
+        # Also flag by wear km: typical tyre life = 40,000 km; warn at 35,000
+        _TYRE_WEAR_WARN_KM = 35_000.0
+        within_physics = int(
+            min_p_7d < _PRESSURE_WARN_KPA or
+            tpms_deflation_count > 2 or
+            features.get("tyre_blast_risk_score", 0.0) > 0.5 or
+            km_since_last_tyre_service >= _TYRE_WEAR_WARN_KM
+        )
+
+        days_to_failure, within_svc = self._label_days_to_failure(
             vin, label_df, "tyre_puncture", t_max
         )
+        if np.isnan(days_to_failure):
+            days_to_failure = days_to_physics
+        within_30 = int(within_svc or within_physics)
+
         km_to_replacement = float(
             (last_tyre_service_odo + 40_000 - odo.iloc[-1]) if (
                 last_tyre_service_odo is not None and len(odo) > 0

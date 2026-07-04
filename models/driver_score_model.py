@@ -47,8 +47,9 @@ def _load():
     global _reg, _clf, _scaler
     if _reg is None:
         _reg    = joblib.load(MODEL_DIR / "driver_score_reg.joblib")
-        _clf    = joblib.load(MODEL_DIR / "driver_risk_clf.joblib")
         _scaler = joblib.load(MODEL_DIR / "driver_score_scaler.joblib")
+        clf_path = MODEL_DIR / "driver_risk_clf.joblib"
+        _clf = joblib.load(clf_path) if clf_path.exists() else None
     return _reg, _clf, _scaler
 
 
@@ -83,20 +84,30 @@ def train(features_df: pd.DataFrame, experiment: str = "autopredict-v1") -> dict
     print("    [driver_score] Optuna HPO (reg) ...", end=" ", flush=True)
     best_reg = _optuna_xgb(X_reg, y_reg, task="reg", n_trials=30)
     print("done")
-    print("    [driver_score] Optuna HPO (clf) ...", end=" ", flush=True)
-    best_clf = _optuna_xgb(X_clf, y_clf, task="clf", n_trials=30)
-    print("done")
-
-    clf_params = {**best_clf, "use_label_encoder": False, "eval_metric": "logloss"}
 
     reg = xgb.XGBRegressor(**best_reg)
     reg.fit(X_reg, y_reg)
 
-    clf = xgb.XGBClassifier(**clf_params)
-    clf.fit(X_clf, y_clf)
+    train_clf = int(y_clf.sum()) > 0
+    clf: Any = None
+    cv_clf: dict = {}
+    if not train_clf:
+        log.warning("driver_score: y_clf all-zeros — skipping classifier, regressor saved only")
+    else:
+        print("    [driver_score] Optuna HPO (clf) ...", end=" ", flush=True)
+        best_clf = _optuna_xgb(X_clf, y_clf, task="clf", n_trials=30)
+        print("done")
+        clf_params = {
+            **best_clf,
+            "use_label_encoder": False,
+            "eval_metric": "logloss",
+            "base_score": float(np.clip(y_clf.mean(), 0.01, 0.99)),
+        }
+        clf = xgb.XGBClassifier(**clf_params)
+        clf.fit(X_clf, y_clf)
+        cv_clf = _cv_metrics(xgb.XGBClassifier, X_clf, y_clf, clf_params, task="clf")
 
     cv_reg = _cv_metrics(xgb.XGBRegressor, X_reg, y_reg, best_reg, task="reg")
-    cv_clf = _cv_metrics(xgb.XGBClassifier, X_clf, y_clf, clf_params, task="clf")
 
     shap_top = _shap_importance(reg, X_reg, avail)
     metrics  = {**cv_reg, **cv_clf, "n_reg": len(df_reg), "n_clf": len(df_clf)}
@@ -104,8 +115,9 @@ def train(features_df: pd.DataFrame, experiment: str = "autopredict-v1") -> dict
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(reg,    MODEL_DIR / "driver_score_reg.joblib")
-    joblib.dump(clf,    MODEL_DIR / "driver_risk_clf.joblib")
     joblib.dump(scaler, MODEL_DIR / "driver_score_scaler.joblib")
+    if clf is not None:
+        joblib.dump(clf, MODEL_DIR / "driver_risk_clf.joblib")
     _reg, _clf, _scaler = reg, clf, scaler
 
     return metrics
@@ -139,7 +151,7 @@ def predict_single(vin: str) -> dict:
     from features.driver_behaviour_features import DriverBehaviourFeaturePipeline
     feats = DriverBehaviourFeaturePipeline().compute_from_influx(vin, lookback_days=30)
     if feats is None or feats.empty:
-        return {"error": f"No driver behaviour data for VIN {vin}"}
+        return {"severity": "unknown", "error": f"No driver behaviour data for VIN {vin}"}
     return predict_batch(feats).iloc[0].to_dict()
 
 
@@ -150,8 +162,11 @@ def predict_batch(features_df: pd.DataFrame) -> pd.DataFrame:
     avail = [c for c in FEATURE_COLS if c in features_df.columns]
     X     = scaler.transform(features_df[avail].fillna(0))
 
-    score_pred  = np.clip(reg.predict(X), 0, 100)
-    risk_prob   = clf.predict_proba(X)[:, 1]
+    score_pred = np.clip(reg.predict(X), 0, 100)
+    if clf is not None:
+        risk_prob = clf.predict_proba(X)[:, 1]
+    else:
+        risk_prob = np.where(score_pred < 50, 0.6, 0.2)  # fallback from reg score
 
     return pd.DataFrame({
         "vin":               features_df["vin"].values if "vin" in features_df.columns else [""] * len(X),

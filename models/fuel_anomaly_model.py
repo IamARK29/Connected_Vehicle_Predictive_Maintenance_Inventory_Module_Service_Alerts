@@ -22,11 +22,14 @@ from models.model_registry import MODEL_DIR, _mlflow_log
 log = logging.getLogger(__name__)
 
 FEATURE_COLS = [
-    "fuel_consumption_deviation",
-    "rpm_variance_proxy",
-    "cold_start_difficulty_proxy",
-    "coolant_rise_rate",
-    "efficiency_vs_range_ratio",
+    "fuel_consumption_deviation_pct",   # deviation from 90-day baseline
+    "rpm_to_speed_ratio_anomaly",       # abnormal RPM/speed ratio (clutch slip, drag)
+    "high_rpm_stress_index",            # sustained high-RPM events
+    "coolant_overtemp_count_30d",       # thermal stress events
+    "oil_pressure_warning_active",      # binary TBox warning signal
+    "mil_warning_active",               # binary MIL warning signal
+    "idle_hours_30d",                   # excessive idling
+    "cold_start_count_30d",             # cold-start stress frequency
 ]
 
 _iso:    Any = None
@@ -108,7 +111,7 @@ def predict_single(vin: str) -> dict:
     from features.engine_features import EngineFeaturePipeline
     feats = EngineFeaturePipeline().compute_from_influx(vin, lookback_days=30)
     if feats is None or feats.empty:
-        return {"error": f"No engine data for VIN {vin}"}
+        return {"severity": "unknown", "error": f"No engine data for VIN {vin}"}
     return predict_batch(feats).iloc[0].to_dict()
 
 

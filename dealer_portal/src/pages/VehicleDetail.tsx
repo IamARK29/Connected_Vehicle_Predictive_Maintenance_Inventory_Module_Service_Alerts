@@ -21,34 +21,44 @@ function Row({ label, value, unit }: { label: string; value: unknown; unit?: str
 }
 
 function HealthOverview({ vin }: { vin: string }) {
-  const { data: vehicle }  = useVehicle(vin)
-  const { data: alertsRaw = [] } = useVehicleAlerts(vin)
-  const alerts = alertsRaw as Alert[]
-  const score = Number(vehicle?.health_score ?? 80)
+  const { data: vehicle, isLoading: vehicleLoading }  = useVehicle(vin)
+  const { data: alertsRaw } = useVehicleAlerts(vin)
+  const alerts = (Array.isArray(alertsRaw) ? alertsRaw : (alertsRaw as any)?.alerts ?? []) as Alert[]
+  const score = vehicle?.health_score != null ? Number(vehicle.health_score) : null
   const v = vehicle ?? {}
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* Health gauge */}
-      <div className="card flex flex-col items-center justify-center gap-4">
-        <HealthGauge value={score} size={140} />
-        <div className="text-center">
-          <p className="text-sm font-semibold text-gray-700">Overall Health</p>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {score >= 80 ? 'Vehicle in good condition' : score >= 60 ? 'Maintenance recommended' : 'Immediate attention required'}
-          </p>
-        </div>
+      <div className="card flex flex-col items-center justify-center gap-4 py-6">
+        {vehicleLoading || score === null ? (
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-[140px] h-[140px] rounded-full border-[10px] border-gray-100 animate-pulse" />
+            <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
+          </div>
+        ) : (
+          <>
+            <HealthGauge value={score} size={140} />
+            <div className="text-center">
+              <p className="text-sm font-semibold text-gray-700">Overall Health</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {score >= 80 ? 'Vehicle in good condition' : score >= 60 ? 'Maintenance recommended' : 'Immediate attention required'}
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Vehicle details */}
       <div className="card">
         <h3 className="font-semibold text-gray-900 mb-3">Vehicle Info</h3>
-        <Row label="Model"              value={v.model_name ?? v.ModelSalesCodeDescription} />
+        <Row label="Model"              value={v.model_name} />
         <Row label="Fuel Type"          value={v.fuel_type} />
-        <Row label="Manufacture Date"   value={v.manufacture_date} />
-        <Row label="Odometer"           value={v.current_odometer_km} unit=" km" />
-        <Row label="Dealer"             value={v.dealer_code} />
-        <Row label="Owner"              value={v.owner_name} />
+        <Row label="Year"               value={v.manufacture_year} />
+        <Row label="Odometer"           value={v.current_odometer_km ?? v.odometer_km} unit=" km" />
+        <Row label="Color"              value={v.color} />
+        <Row label="Dealer"             value={[v.dealer_code, v.dealer_city ? `(${v.dealer_city})` : ''].filter(Boolean).join(' ') || undefined} />
+        <Row label="Driver Profile"     value={v.driver_profile?.replace(/_/g, ' ')} />
         <Row label="Last Seen"          value={v.last_seen ? new Date(v.last_seen).toLocaleString() : undefined} />
       </div>
 
@@ -90,7 +100,7 @@ function HealthOverview({ vin }: { vin: string }) {
 
 function Predictions({ vin }: { vin: string }) {
   const { data: predsRaw, isLoading } = useVehiclePredictions(vin)
-  const predictions = (predsRaw ?? {}) as Record<string, MLPrediction>
+  const predictions = ((predsRaw as any)?.predictions ?? predsRaw ?? {}) as Record<string, MLPrediction>
 
   if (isLoading) return <div className="text-gray-400 text-sm">Loading predictions…</div>
 
@@ -145,18 +155,21 @@ function ServiceHistory({ vin }: { vin: string }) {
 
 function DriverScore({ vin }: { vin: string }) {
   const { data: predsRaw } = useVehiclePredictions(vin)
-  const preds = (predsRaw ?? {}) as Record<string, MLPrediction>
+  const preds = ((predsRaw as any)?.predictions ?? predsRaw ?? {}) as Record<string, MLPrediction>
   const drv   = preds.driver_score
-  const raw   = (drv?.raw ?? {}) as Record<string, number>
-  const score = Number(raw.composite_drive_score ?? raw.driver_score ?? 75)
+  const raw   = (drv?.raw ?? {}) as Record<string, any>
+  const score = Number(raw.composite_drive_score ?? drv?.value ?? 75)
 
-  const METRICS: [string, string][] = [
-    ['harsh_accel_rate_30d',    'Harsh Acceleration'],
-    ['harsh_brake_rate_30d',    'Harsh Braking'],
-    ['overspeed_80_fraction_30d','Overspeed (>80 km/h)'],
-    ['idle_fraction_30d',        'Idle Fraction'],
-    ['fuel_efficiency_score',    'Fuel Efficiency'],
-    ['night_driving_fraction_30d','Night Driving'],
+  type Metric = { key: string; label: string; unit: string; badAbove: number; format: (v: number) => string }
+  const METRICS: Metric[] = [
+    { key: 'harsh_braking_per_trip',  label: 'Harsh Braking',        unit: 'events/trip', badAbove: 5,   format: v => v.toFixed(1) },
+    { key: 'harsh_accel_per_trip',    label: 'Harsh Acceleration',   unit: 'events/trip', badAbove: 3,   format: v => v.toFixed(1) },
+    { key: 'overspeed_fraction',      label: 'Overspeed (>80 kph)',  unit: '%',           badAbove: 0.1, format: v => (v * 100).toFixed(1) },
+    { key: 'idle_fraction',           label: 'Idle Time',            unit: '%',           badAbove: 0.3, format: v => (v * 100).toFixed(0) },
+    { key: 'avg_max_speed_kph',       label: 'Avg Peak Speed',       unit: 'kph',         badAbove: 100, format: v => v.toFixed(0) },
+    { key: 'avg_speed_kph',           label: 'Average Speed',        unit: 'kph',         badAbove: 999, format: v => v.toFixed(0) },
+    { key: 'avg_trip_distance_km',    label: 'Avg Trip Distance',    unit: 'km',          badAbove: 999, format: v => v.toFixed(1) },
+    { key: 'fuel_efficiency_l100km',  label: 'Fuel Consumption',     unit: 'L/100km',     badAbove: 12,  format: v => v.toFixed(1) },
   ]
 
   return (
@@ -170,31 +183,40 @@ function DriverScore({ vin }: { vin: string }) {
         }`}>
           {score >= 70 ? 'Low Risk' : score >= 50 ? 'Medium Risk' : 'High Risk'}
         </div>
+        {raw.driver_profile && (
+          <p className="text-xs text-gray-500 font-medium mt-1">{raw.driver_profile}</p>
+        )}
+        {raw.total_trips_analysed != null && (
+          <p className="text-xs text-gray-400">Based on {raw.total_trips_analysed} trips</p>
+        )}
+        {raw.score_min != null && raw.score_max != null && (
+          <p className="text-xs text-gray-400">Range: {raw.score_min} - {raw.score_max} (std: {raw.score_std})</p>
+        )}
       </div>
 
       <div className="card space-y-4">
         <h3 className="font-semibold text-gray-900">Behaviour Breakdown</h3>
-        {METRICS.map(([key, label]) => {
-          const val = raw[key]
+        <p className="text-xs text-gray-500">Computed from actual trip telemetry data</p>
+        {METRICS.map(m => {
+          const val = raw[m.key]
           if (val == null) return null
-          const pct = Math.min(100, Math.round(val * 100))
+          const numVal = Number(val)
+          const isBad = numVal > m.badAbove
           return (
-            <div key={key} className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-gray-600">{label}</span>
-                <span className="font-medium text-gray-800">{pct}%</span>
-              </div>
-              <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${pct < 15 ? 'bg-green-500' : pct < 40 ? 'bg-yellow-400' : 'bg-red-500'}`}
-                  style={{ width: `${pct}%` }}
-                />
+            <div key={m.key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+              <span className="text-sm text-gray-600">{m.label}</span>
+              <div className="flex items-center gap-2">
+                <span className={`text-sm font-bold tabular-nums ${isBad ? 'text-red-600' : 'text-green-600'}`}>
+                  {m.format(numVal)}
+                </span>
+                <span className="text-xs text-gray-400">{m.unit}</span>
+                <span className={`w-2 h-2 rounded-full ${isBad ? 'bg-red-500' : 'bg-green-500'}`} />
               </div>
             </div>
           )
         })}
         {Object.keys(raw).length === 0 && (
-          <p className="text-sm text-gray-400">Driver score predictions not available. Train the driver model first.</p>
+          <p className="text-sm text-gray-400">No trip data available for this vehicle.</p>
         )}
       </div>
     </div>
@@ -217,11 +239,12 @@ export default function VehicleDetail() {
             <Link to="/" className="text-xs text-blue-600 hover:underline">← Fleet</Link>
           </div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {vehicle?.model_name ?? 'Vehicle'} — {vehicle?.license_plate ?? vin}
+            {vehicle?.model_name ?? 'Vehicle'}
+            {vehicle?.license_plate ? <span className="text-gray-400 font-normal"> · {vehicle.license_plate}</span> : null}
           </h1>
           <p className="text-gray-400 font-mono text-xs mt-0.5">{vin}</p>
         </div>
-        {vehicle?.health_score !== undefined && (
+        {vehicle?.health_score != null && (
           <div className="card p-3">
             <HealthGauge value={Number(vehicle.health_score)} size={64} label="Health" />
           </div>
@@ -252,7 +275,7 @@ export default function VehicleDetail() {
         {activeTab === 'Health Overview' && <HealthOverview vin={vin} />}
         {activeTab === 'Live Telemetry' && (
           <div className="card">
-            <h3 className="font-semibold text-gray-900 mb-4">Live Telemetry — {vin}</h3>
+            <h3 className="font-semibold text-gray-900 mb-4">Live Telemetry: {vin}</h3>
             <TelemetryChart vin={vin} />
           </div>
         )}

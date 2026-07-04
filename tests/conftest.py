@@ -39,45 +39,54 @@ def _make_telemetry_df(vin: str = SAMPLE_VINS[0], n_rows: int = 100) -> pd.DataF
     timestamps = [now - timedelta(hours=i) for i in range(n_rows - 1, -1, -1)]
 
     return pd.DataFrame({
-        "timestamp":       timestamps,
-        "vin":             vin,
-        "speed":           rng.uniform(0, 120, n_rows),
-        "brake_pos":       rng.uniform(0, 100, n_rows),
-        "accel_x":         rng.uniform(-100, 100, n_rows),
-        "accel_y":         rng.uniform(-50, 50, n_rows),
-        "accel_z":         rng.uniform(-50, 50, n_rows),
-        "odometer":        np.cumsum(rng.uniform(0.5, 2.0, n_rows)) + 50_000,
-        "brake_front_mm":  rng.uniform(3, 12, n_rows),
-        "brake_rear_mm":   rng.uniform(3, 12, n_rows),
-        "brake_fluid_pct": rng.uniform(80, 100, n_rows),
-        "batt_12v":        rng.uniform(12.0, 14.5, n_rows),
-        "coolant_temp":    rng.uniform(80, 100, n_rows),
-        "oil_life_pct":    rng.uniform(30, 100, n_rows),
-        "rpm":             rng.uniform(700, 3000, n_rows),
-        "gear_pos":        rng.integers(0, 6, n_rows).astype(float),
-        "accel_pos":       rng.uniform(0, 100, n_rows),
-        "steering_angle":  rng.uniform(-30, 30, n_rows),
-        # HV battery
-        "soc":             rng.uniform(20, 90, n_rows),
-        "soh":             rng.uniform(85, 100, n_rows),
-        "cell_max_temp":   rng.uniform(25, 40, n_rows),
-        "cell_min_temp":   rng.uniform(20, 35, n_rows),
-        "cell_max_vol":    rng.uniform(3.6, 3.8, n_rows),
-        "cell_min_vol":    rng.uniform(3.5, 3.7, n_rows),
-        "pack_voltage":    rng.uniform(300, 400, n_rows),
-        "pack_current":    rng.uniform(-10, 50, n_rows),
-        # Tyres (raw 0-255 per TBox; ~2.2 bar nominal → raw ≈ 44 at ×0.05)
-        "tyre_fl":         rng.uniform(35, 55, n_rows),
-        "tyre_fr":         rng.uniform(35, 55, n_rows),
-        "tyre_rl":         rng.uniform(35, 55, n_rows),
-        "tyre_rr":         rng.uniform(35, 55, n_rows),
-        "tyre_temp_fl":    rng.uniform(25, 50, n_rows),
-        "tyre_temp_fr":    rng.uniform(25, 50, n_rows),
-        "tyre_temp_rl":    rng.uniform(25, 50, n_rows),
-        "tyre_temp_rr":    rng.uniform(25, 50, n_rows),
-        # driver behaviour proxy
-        "fuel_economy":    rng.uniform(10, 20, n_rows),
-        "idle_time_s":     rng.uniform(0, 60, n_rows),
+        "timestamp":            timestamps,
+        "vin":                  vin,
+        # Real TBox motion/chassis signals (snake_case aliases from _COL_ALIASES)
+        "speed":                rng.uniform(0, 120, n_rows),
+        "brake_pos":            rng.uniform(0, 100, n_rows),
+        "accel_x":              rng.uniform(-100, 100, n_rows),
+        "accel_y":              rng.uniform(-50, 50, n_rows),     # tboxAccelY lateral G
+        "accel_z":              rng.uniform(-50, 50, n_rows),     # tboxAccelZ hill G
+        "odometer":             np.cumsum(rng.uniform(0.5, 2.0, n_rows)) + 50_000,
+        "rpm":                  rng.uniform(700, 3000, n_rows),   # vehRPM (ICE only)
+        "gear_pos":             rng.integers(0, 6, n_rows).astype(float),
+        "accel_pos":            rng.uniform(0, 100, n_rows),
+        "steering_angle":       rng.uniform(-30, 30, n_rows),
+        "batt_12v":             rng.uniform(12.0, 14.5, n_rows),  # vehBatt
+        "coolant_temp":         rng.uniform(80, 100, n_rows),     # vehCoolantTemp
+        "sys_pwr_mod":          rng.integers(0, 4, n_rows),       # vehSysPwrMod
+        # Real binary warning signals from TBox spec
+        "brake_fluid_low":      rng.integers(0, 2, n_rows),       # vehBrkFludLvlLow
+        "abs_failure":          rng.integers(0, 2, n_rows),       # vehABSF
+        "oil_pressure_warning": rng.integers(0, 2, n_rows),       # vehOilPressureWarning
+        "mil_warning":          rng.integers(0, 2, n_rows),       # vehMILWarning
+        "tpms_status":          rng.integers(0, 2, n_rows),       # wheelTyreMonitorStatus
+        # Tyre pressures (TBox raw kPa encoding: N × 0.0138 × 100)
+        "tyre_fl":              rng.integers(160, 200, n_rows).astype(float),
+        "tyre_fr":              rng.integers(160, 200, n_rows).astype(float),
+        "tyre_rl":              rng.integers(160, 200, n_rows).astype(float),
+        "tyre_rr":              rng.integers(160, 200, n_rows).astype(float),
+        # HV battery (EV channels 19-22) — real BMS signals
+        "soc":                  rng.uniform(20, 90, n_rows),      # vehBMSPackSOC
+        "cell_max_temp":        rng.uniform(25, 40, n_rows),      # vehBMSCellMaxTem
+        "cell_min_temp":        rng.uniform(20, 35, n_rows),      # vehBMSCellMinTem
+        "cell_max_vol":         rng.uniform(3.6, 3.8, n_rows),    # vehBMSCellMaxVol
+        "cell_min_vol":         rng.uniform(3.5, 3.7, n_rows),    # vehBMSCellMinVol
+        "pack_voltage":         rng.uniform(300, 400, n_rows),    # vehBMSPackVol
+        "pack_current":         rng.uniform(-10, 50, n_rows),     # vehBMSPackCrnt
+        "bms_cmu_fault":        rng.integers(0, 4, n_rows),       # vehBMSCMUFlt (0-3)
+        "bms_cell_volt_fault":  rng.integers(0, 4, n_rows),       # vehBMSCellVoltFlt
+        "bms_pack_temp_fault":  rng.integers(0, 4, n_rows),       # vehBMSPackTemFlt
+        "dcdc_temp":            rng.uniform(30, 60, n_rows),      # vehHVDCDCTem
+        "is_charging":          rng.integers(0, 2, n_rows),       # vehIsCharging
+        "dc_or_ac":             rng.integers(0, 2, n_rows),       # dcOrAC
+        # Lighting and HVAC
+        "dip_light":            rng.integers(0, 2, n_rows),       # vehDipLight
+        "main_light":           rng.integers(0, 2, n_rows),       # vehMainLight
+        "ac_on":                rng.integers(0, 2, n_rows),       # vehAC
+        # Driver behaviour proxy
+        "fuel_economy":         rng.uniform(10, 20, n_rows),
+        "idle_time_s":          rng.uniform(0, 60, n_rows),
     })
 
 

@@ -36,7 +36,28 @@ out/
 .DS_Store
 Thumbs.db
 
-# ML models
+# ML model artefacts (regenerate via: py models/train_all.py)
+models/artefacts/*.joblib
+models/artefacts/*.pkl
 ml/models/*.pkl
 ml/models/*.joblib
 ml/models/*.h5
+
+# Large synthetic telemetry files (regenerate via POST /synthetic/generate)
+# Each file is ~160MB — exceeds GitHub 100MB limit
+data/synthetic/telemetry_*.csv
+data/synthetic/trips.csv
+
+# Runtime logs
+*.log
+api_stdout.log
+api_stderr.log
+dealer_portal/vite_stdout.log
+dealer_portal/vite_stderr.log
+
+# Scratchpad / temp
+scratchpad/
+*.bak
+
+# MLflow experiment tracking
+mlruns/

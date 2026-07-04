@@ -25,8 +25,7 @@ from models.model_registry import MODEL_DIR, _optuna_xgb, _shap_importance, _mlf
 log = logging.getLogger(__name__)
 
 FEATURE_COLS = [
-    "soh_estimated",
-    "soh_trend_slope_90d",
+    "soh_trend_slope_90d",          # Coulomb-counting derived slope (not current SOH — avoids target leakage)
     "cell_voltage_spread",
     "cell_voltage_spread_trend_30d",
     "cell_voltage_spread_p95_30d",
@@ -37,6 +36,13 @@ FEATURE_COLS = [
     "thermal_fault_count_30d",
     "range_per_kwh_30d_trend",
     "soc_current",
+    # Real TBox BMS fault signals
+    "bms_cmu_fault_count_30d",      # from vehBMSCMUFlt
+    "bms_cv_fault_count_30d",       # from vehBMSCellVoltFlt
+    "bms_pt_fault_count_30d",       # from vehBMSPackTemFlt
+    "max_fault_severity_30d",       # max fault level (0-3)
+    "dcdc_temp_max_30d",            # from vehHVDCDCTem
+    "dc_charge_ratio_30d",          # DC fast charge ratio
 ]
 TARGET_REG = "soh_estimated"
 TARGET_CLF = "soh_below_80_within_90_days"
@@ -102,8 +108,12 @@ def train(features_df: pd.DataFrame, experiment: str = "autopredict-v1") -> dict
     lr_rmse  = float(np.sqrt(mean_squared_error(y_reg, lr_preds)))
 
     # ── XGBoost binary classifier ──────────────────────────────────────────
+    if y_clf.sum() == 0:
+        log.warning("hv_battery_soh: y_clf all-zeros — skipping classifier")
+        return {"skipped": True, "reason": "no positive classifier labels"}
     best_clf = _optuna_xgb(X_clf, y_clf, task="clf", n_trials=30)
-    clf_params = {**best_clf, "use_label_encoder": False, "eval_metric": "logloss"}
+    clf_params = {**best_clf, "use_label_encoder": False, "eval_metric": "logloss",
+                  "base_score": float(np.clip(y_clf.mean(), 0.01, 0.99))}
     clf = xgb.XGBClassifier(**clf_params)
     clf.fit(X_clf, y_clf)
     cv_clf = _cv_metrics(xgb.XGBClassifier, X_clf, y_clf, clf_params, task="clf")
@@ -162,7 +172,7 @@ def predict_single(vin: str) -> dict:
     from features.battery_hv_features import HVBatteryFeaturePipeline
     feats = HVBatteryFeaturePipeline().compute_from_influx(vin, lookback_days=90)
     if feats is None or feats.empty:
-        return {"error": f"No EV/HV data for VIN {vin}"}
+        return {"severity": "unknown", "error": f"No EV/HV data for VIN {vin}"}
 
     # Base prediction
     result = predict_batch(feats).iloc[0].to_dict()

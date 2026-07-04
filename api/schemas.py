@@ -81,26 +81,29 @@ class VehicleDetail(BaseModel):
 # ── Telemetry ──────────────────────────────────────────────────────────────────
 
 class TelemetryIngest(BaseModel):
+    """Normalized single-row telemetry record from TBox Big Data Spec."""
     vin:                     str
     timestamp:               datetime
     speed_kmh:               float = 0.0
-    engine_rpm:              float = 0.0
-    engine_temp_c:           float = 90.0
-    engine_oil_life_pct:     float = 100.0
-    throttle_pct:            float = 0.0
-    fuel_level_pct:          float = 50.0
-    fuel_consumption_l100km: float = 8.0
-    brake_pad_front_mm:      float = 10.0
-    brake_pad_rear_mm:       float = 10.0
-    brake_fluid_level_pct:   float = 100.0
-    battery_12v_voltage_v:   float = 12.6
-    hv_battery_soc_pct:      float = 80.0
-    hv_battery_soh_pct:      float = 95.0
-    hv_battery_temp_c:       float = 25.0
-    tyre_pressure_fl_bar:    float = 2.3
-    tyre_pressure_fr_bar:    float = 2.3
-    tyre_pressure_rl_bar:    float = 2.3
-    tyre_pressure_rr_bar:    float = 2.3
+    engine_rpm:              float = 0.0          # ICE only (vehRPM); 0 for EV
+    engine_temp_c:           float = 90.0         # vehCoolantTemp
+    throttle_pct:            float = 0.0          # vehAccelPos
+    fuel_level_pct:          float = 50.0         # FuelTankLevel (ICE/PHEV only)
+    fuel_consumption_l100km: float = 0.0          # derived from vehFuelConsumed
+    battery_12v_voltage_v:   float = 12.6         # vehBatt (×0.1V encoded)
+    hv_battery_soc_pct:      float = 80.0         # vehBMSPackSOC (EV only)
+    hv_battery_cell_max_temp_c: float = 25.0      # vehBMSCellMaxTem (EV only)
+    # Real TBox binary warning signals
+    oil_pressure_warning:    bool  = False         # vehOilPressureWarning (ICE)
+    mil_warning:             bool  = False         # vehMILWarning (ICE)
+    brake_fluid_low:         bool  = False         # vehBrkFludLvlLow
+    tpms_status:             int   = 0             # wheelTyreMonitorStatus (0=ok, 1=alert)
+    abs_failure:             bool  = False         # vehABSF
+    # Tyre pressures (TBox raw integer encoding; ×0.0138×100 = kPa)
+    tyre_pressure_fl_raw:    int   = 177           # frontLeftTyrePressure   (~244 kPa)
+    tyre_pressure_fr_raw:    int   = 177           # frontRrightTyrePressure (note: double-r per spec)
+    tyre_pressure_rl_raw:    int   = 177           # rearLeftTyrePressure
+    tyre_pressure_rr_raw:    int   = 177           # rearRightTyrePressure
     odometer_km:             float = 0.0
     latitude:                float = 0.0
     longitude:               float = 0.0
@@ -229,19 +232,35 @@ class BayStatus(BaseModel):
 
 
 class InventoryItem(BaseModel):
-    part_code:   str
-    description: str = ""
-    in_stock:    bool = True
-    qty:         int  = 0
-    reorder_qty: int  = 0
+    part_code:           str
+    description:         str   = ""
+    in_stock:            bool  = True
+    qty:                 int   = 0
+    reorder_qty:         int   = 0
+    # Enriched fields
+    unit_cost_inr:       float = 0.0
+    reorder_point:       int   = 3
+    safety_stock:        int   = 1
+    abc_class:           str   = "B"   # A=critical high-demand, B=regular, C=slow-moving
+    lead_time_days:      int   = 7
+    supplier:            str   = ""
+    monthly_demand_avg:  float = 0.0
+    days_until_stockout: Optional[int] = None
 
 
 class DemandForecast(BaseModel):
-    part_code:     str
-    description:   str   = ""
-    demand_30d:    int   = 0
-    demand_90d:    int   = 0
-    confidence:    float = 0.5
+    part_code:              str
+    description:            str   = ""
+    demand_30d:             int   = 0
+    demand_90d:             int   = 0
+    confidence:             float = 0.5
+    # Enriched fields
+    historical_monthly_avg: float = 0.0
+    alert_contribution:     int   = 0
+    rul_contribution:       int   = 0
+    forecast_method:        str   = "statistical"
+    demand_trend:           str   = "stable"   # rising / stable / falling
+    days_until_stockout:    Optional[int] = None
 
 
 # ── Service history & trips ────────────────────────────────────────────────────

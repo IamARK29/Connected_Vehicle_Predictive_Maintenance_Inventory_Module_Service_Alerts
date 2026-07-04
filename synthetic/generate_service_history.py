@@ -26,14 +26,16 @@ from synthetic.config import SyntheticConfig
 fake = Faker("en_IN")
 
 # ── Scheduled service milestones (km intervals) ────────────────────────────
+# fuel_types: set of fuel types this schedule applies to; None = all types
 
 _SCHEDULES: list[dict] = [
-    {"service_type": "OIL_CHANGE",      "km_interval":  7_500, "km_first":  7_500},
-    {"service_type": "TYRE_ROTATION",   "km_interval": 10_000, "km_first": 10_000},
-    {"service_type": "FULL_SERVICE",    "km_interval": 20_000, "km_first": 20_000},
-    {"service_type": "BRAKE_CHECK",     "km_interval": 45_000, "km_first": 45_000},
-    {"service_type": "AC_SERVICE",      "km_interval": 30_000, "km_first": 30_000},
-    {"service_type": "COOLANT_FLUSH",   "km_interval": 60_000, "km_first": 60_000},
+    {"service_type": "OIL_CHANGE",          "km_interval":  7_500, "km_first":  7_500, "fuel_types": {"ICE", "PHEV"}},
+    {"service_type": "TYRE_ROTATION",        "km_interval": 10_000, "km_first": 10_000, "fuel_types": None},
+    {"service_type": "FULL_SERVICE",         "km_interval": 20_000, "km_first": 20_000, "fuel_types": None},
+    {"service_type": "BRAKE_CHECK",          "km_interval": 45_000, "km_first": 45_000, "fuel_types": None},
+    {"service_type": "AC_SERVICE",           "km_interval": 30_000, "km_first": 30_000, "fuel_types": None},
+    {"service_type": "COOLANT_FLUSH",        "km_interval": 60_000, "km_first": 60_000, "fuel_types": {"ICE", "PHEV"}},
+    {"service_type": "HV_BATTERY_INSPECT",   "km_interval": 20_000, "km_first": 20_000, "fuel_types": {"EV", "PHEV"}},
 ]
 
 # ── Part price catalogue (INR) ─────────────────────────────────────────────
@@ -48,12 +50,26 @@ _PARTS_CATALOGUE: dict[str, list[tuple[str, str, float, float]]] = {
     "TYRE_ROTATION": [
         ("LABOUR-TYRE",  "LABOUR",     200,    400),
     ],
+    # ICE/PHEV full service includes oil and fuel filter
     "FULL_SERVICE": [
         ("OIL-5W30-4L",  "CONSUMABLE", 800,  1_000),
         ("OIL-FILTER",   "FILTER",     180,    280),
         ("AIR-FILTER",   "FILTER",     400,    700),
         ("FUEL-FILTER",  "FILTER",     350,    600),
         ("LABOUR-FULL",  "LABOUR",   1_200,  2_000),
+    ],
+    # EV full service: no oil, no fuel filter — cabin air + software check
+    "FULL_SERVICE_EV": [
+        ("AIR-FILTER",    "FILTER",     400,    700),
+        ("CABIN-FILTER",  "FILTER",     500,    800),
+        ("WIPER-BLADE",   "SPARE",      400,    700),
+        ("TYRE-CHECK-LAB","LABOUR",     300,    600),
+        ("SW-UPDATE-LAB", "LABOUR",     500,    900),
+        ("LABOUR-FULL",   "LABOUR",   1_000,  1_600),
+    ],
+    "HV_BATTERY_INSPECT": [
+        ("DIAG-HV-BAT",  "LABOUR",   1_200,  2_200),
+        ("BMS-CALIBRATE","LABOUR",     800,  1_500),
     ],
     "BRAKE_CHECK": [
         ("BRAKE-PAD-F",  "SPARE",    2_000,  3_500),
@@ -147,11 +163,14 @@ def generate_service_history(
         odo_start = float(vrow["initial_odometer"])
         avg_daily = cfg.avg_daily_km[str(vrow["driver_profile"])]
 
+        fuel_type = str(vrow.get("fuel_type", "ICE"))
+
         scheduled_events = _build_scheduled_events(
             odo_start=odo_start,
             avg_daily_km=avg_daily,
             start_dt=start_dt,
             end_dt=end_dt,
+            fuel_type=fuel_type,
         )
 
         # Add failure-specific unscheduled events
@@ -160,7 +179,7 @@ def generate_service_history(
         all_events = sorted(scheduled_events + fail_events, key=lambda e: e["date"])
 
         for ev in all_events:
-            rows = _build_line_items(ev, vrow, rng, np_rng, cfg)
+            rows = _build_line_items(ev, vrow, rng, np_rng, cfg, fuel_type)
             all_rows.extend(rows)
             print(f"  {vin}: {ev['service_type']} @ {ev['date'].date()} -> {len(rows)} line items")
 
@@ -176,10 +195,15 @@ def _build_scheduled_events(
     avg_daily_km: float,
     start_dt: datetime,
     end_dt: datetime,
+    fuel_type: str = "ICE",
 ) -> list[dict]:
     events: list[dict] = []
 
     for sched in _SCHEDULES:
+        allowed = sched.get("fuel_types")
+        if allowed is not None and fuel_type not in allowed:
+            continue  # skip service types not applicable to this fuel type
+
         km_interval = sched["km_interval"]
         km_first    = sched["km_first"]
 
@@ -231,6 +255,7 @@ def _build_line_items(
     rng: random.Random,
     np_rng: np.random.Generator,
     cfg: SyntheticConfig,
+    fuel_type: str = "ICE",
 ) -> list[dict]:
     svc_type  = event["service_type"]
     svc_date  = event["date"]
@@ -241,7 +266,11 @@ def _build_line_items(
     issue_type = "WTY" if rng.random() < 0.60 else "PAID"
     order_num = uuid.uuid4().hex[:8].upper()
 
-    parts_list = _PARTS_CATALOGUE.get(svc_type, _PARTS_CATALOGUE["FULL_SERVICE"])
+    # Route EV FULL_SERVICE to EV-specific parts (no oil/fuel filter)
+    catalogue_key = svc_type
+    if svc_type == "FULL_SERVICE" and fuel_type == "EV":
+        catalogue_key = "FULL_SERVICE_EV"
+    parts_list = _PARTS_CATALOGUE.get(catalogue_key, _PARTS_CATALOGUE["FULL_SERVICE"])
     rows: list[dict] = []
 
     for i, (order_item, mat_group, price_min, price_max) in enumerate(parts_list):

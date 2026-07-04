@@ -26,27 +26,30 @@ log = logging.getLogger(__name__)
 POSITIONS = ["fl", "fr", "rl", "rr"]
 
 FEATURE_COLS = [
-    # per-corner pressure (7d avg + 14d trend + temperature-corrected)
-    *[f"tyre_{p}_pressure_7d_avg"        for p in POSITIONS],
-    *[f"tyre_{p}_pressure_trend_14d"     for p in POSITIONS],
-    *[f"tyre_{p}_pressure_temp_corrected" for p in POSITIONS],
-    # imbalance
-    "front_axle_pressure_imbalance",
-    "rear_axle_pressure_imbalance",
-    "max_cross_axle_imbalance",
-    # puncture detector
-    "max_pressure_drop_rate_kpa_per_day",
-    # dynamics
-    "lateral_g_proxy_mean_30d",
-    "harsh_brake_rate_30d",
-    "harsh_turn_rate_30d",
-    # usage
-    "km_since_tyre_service",
+    # Per-corner pressure — names match tyre_features.py pipeline output
+    *[f"pressure_{p}_7d_avg"         for p in POSITIONS],
+    *[f"pressure_{p}_trend_14d"      for p in POSITIONS],
+    *[f"pressure_{p}_temp_corrected" for p in POSITIONS],
+    # Axle imbalance
+    "axle_imbalance_front",
+    "axle_imbalance_rear",
+    # Pressure drop rate per corner
+    *[f"pressure_drop_rate_{p}" for p in POSITIONS],
+    # Real TPMS signal from wheelTyreMonitorStatus
+    "tpms_status",
+    "tpms_deflation_count",
+    "tyre_blast_risk_score",
+    # Dynamics — real tboxAccelY when available, steer proxy fallback
+    "lateral_g_95th_30d",
+    "harsh_brake_per_100km_30d",
+    "sudden_turn_per_100km_30d",
+    # Usage
+    "km_since_last_tyre_service",
     "avg_speed_30d",
-    "total_km_proxy",
+    "tyre_stress_cumulative",
 ]
-TARGET_REG = "km_to_tyre_replacement"
-TARGET_CLF = "tyre_replacement_within_30_days"
+TARGET_REG = "km_to_replacement"
+TARGET_CLF = "tyre_within_30_days"
 
 # Immediate puncture alert threshold (kPa/day)
 PUNCTURE_THRESHOLD_KPA_PER_DAY = 5.0
@@ -95,12 +98,17 @@ def _optuna_lgbm(X, y, task: str = "reg", n_trials: int = 40) -> dict:
                     m.fit(X[tr], y[tr])
                     if y[te].sum() == 0:
                         continue
-                    scores.append(-roc_auc_score(y[te], m.predict_proba(X[te])[:, 1]))
+                    preds = m.predict_proba(X[te])[:, 1]
+                    s = -roc_auc_score(y[te], preds)
                 else:
                     m = lgb.LGBMRegressor(**params)
                     m.fit(X[tr], y[tr])
-                    scores.append(mean_absolute_error(y[te], m.predict(X[te])))
-            return float(np.mean(scores)) if scores else 1e9
+                    preds = m.predict(X[te])
+                    s = mean_absolute_error(y[te], preds)
+                if np.isfinite(s):
+                    scores.append(s)
+            valid = [s for s in scores if np.isfinite(s)]
+            return float(np.mean(valid)) if valid else 1e9
 
         study = optuna.create_study(direction="minimize",
                                     sampler=optuna.samplers.TPESampler(seed=42))
@@ -136,9 +144,9 @@ def train(features_df: pd.DataFrame, experiment: str = "autopredict-v1") -> dict
         return {"skipped": True, "reason": "insufficient data"}
 
     scaler = StandardScaler()
-    X_reg  = scaler.fit_transform(df_reg[avail].fillna(0))
+    X_reg  = np.nan_to_num(scaler.fit_transform(df_reg[avail].fillna(0)), nan=0.0, posinf=0.0, neginf=0.0)
     y_reg  = df_reg[TARGET_REG].values.astype(float)
-    X_clf  = scaler.transform(df_clf[avail].fillna(0))
+    X_clf  = np.nan_to_num(scaler.transform(df_clf[avail].fillna(0)), nan=0.0, posinf=0.0, neginf=0.0)
     y_clf  = df_clf[TARGET_CLF].values.astype(int)
 
     print("    [tyre_wear] Optuna HPO (reg) ...", end=" ", flush=True)
@@ -191,14 +199,14 @@ def evaluate(features_df: pd.DataFrame) -> dict:
 
     df_reg = features_df.dropna(subset=avail + [TARGET_REG])
     if len(df_reg) > 0:
-        X = scaler.transform(df_reg[avail].fillna(0))
+        X = np.nan_to_num(scaler.transform(df_reg[avail].fillna(0)), nan=0.0, posinf=0.0, neginf=0.0)
         p = lgbm.predict(X)
         metrics["mae"]  = round(float(mean_absolute_error(df_reg[TARGET_REG], p)), 1)
         metrics["rmse"] = round(float(np.sqrt(mean_squared_error(df_reg[TARGET_REG], p))), 1)
 
     df_clf = features_df.dropna(subset=avail + [TARGET_CLF])
     if len(df_clf) > 0 and df_clf[TARGET_CLF].sum() > 0:
-        X = scaler.transform(df_clf[avail].fillna(0))
+        X = np.nan_to_num(scaler.transform(df_clf[avail].fillna(0)), nan=0.0, posinf=0.0, neginf=0.0)
         metrics["auc"] = round(float(roc_auc_score(df_clf[TARGET_CLF], clf.predict_proba(X)[:, 1])), 4)
 
     return metrics
@@ -219,7 +227,7 @@ def predict_single(vin: str) -> dict:
     from features.tyre_features import TyreFeaturePipeline
     feats = TyreFeaturePipeline().compute_from_influx(vin, lookback_days=30)
     if feats is None or feats.empty:
-        return {"error": f"No tyre data for VIN {vin}"}
+        return {"severity": "unknown", "error": f"No tyre data for VIN {vin}"}
     return predict_batch(feats).iloc[0].to_dict()
 
 
@@ -228,7 +236,7 @@ def predict_single(vin: str) -> dict:
 def predict_batch(features_df: pd.DataFrame) -> pd.DataFrame:
     lgbm, clf, scaler = _load()
     avail = [c for c in FEATURE_COLS if c in features_df.columns]
-    X     = scaler.transform(features_df[avail].fillna(0))
+    X     = np.nan_to_num(scaler.transform(features_df[avail].fillna(0)), nan=0.0, posinf=0.0, neginf=0.0)
 
     km_pred    = np.clip(lgbm.predict(X), 0, 80_000)
     prob_30d   = clf.predict_proba(X)[:, 1]

@@ -1,0 +1,434 @@
+{
+  "brake_wear_rul": {
+    "model_name": "brake_wear_rul",
+    "algorithm": "Weibull AFT",
+    "target": "days_to_failure",
+    "training_samples": 18400,
+    "feature_names": [
+      "harsh_brake_rate_30d",
+      "km_since_last_brake_service",
+      "brake_thermal_stress",
+      "abs_activation_rate_30d",
+      "downhill_brake_stress",
+      "regen_fraction"
+    ],
+    "feature_importances": {
+      "harsh_brake_rate_30d": 0.166667,
+      "km_since_last_brake_service": 0.166667,
+      "brake_thermal_stress": 0.166667,
+      "abs_activation_rate_30d": 0.166667,
+      "downhill_brake_stress": 0.166667,
+      "regen_fraction": 0.166667
+    },
+    "metrics": {
+      "concordance_index": 0.5028
+    },
+    "trained_at": "2026-07-03T19:44:14.305589+00:00",
+    "status": "trained",
+    "notes": "RUL survival model trained in 1087.0s on 18400 rows"
+  },
+  "engine_oil_rul": {
+    "model_name": "engine_oil_rul",
+    "algorithm": "Cox Proportional Hazards",
+    "target": "days_to_failure",
+    "training_samples": 18400,
+    "feature_names": [
+      "km_since_oil_change",
+      "cold_start_count_30d",
+      "high_rpm_stress_index",
+      "oil_degradation_index",
+      "oil_pressure_warning_active",
+      "mil_warning_active"
+    ],
+    "feature_importances": {
+      "km_since_oil_change": 0.166667,
+      "cold_start_count_30d": 0.166667,
+      "high_rpm_stress_index": 0.166667,
+      "oil_degradation_index": 0.166667,
+      "oil_pressure_warning_active": 0.166667,
+      "mil_warning_active": 0.166667
+    },
+    "metrics": {},
+    "trained_at": "2026-07-03T19:44:14.341569+00:00",
+    "status": "trained",
+    "notes": "RUL survival model trained in 1087.0s on 18400 rows"
+  },
+  "battery_12v_rul": {
+    "model_name": "battery_12v_rul",
+    "algorithm": "Cox Proportional Hazards",
+    "target": "days_to_failure",
+    "training_samples": 18400,
+    "feature_names": [
+      "resting_voltage_trend_14d",
+      "battery_12v_health_score",
+      "cranking_voltage_dip_avg",
+      "battery_age_years",
+      "light_on_engine_off_events_7d"
+    ],
+    "feature_importances": {
+      "resting_voltage_trend_14d": 0.2,
+      "battery_12v_health_score": 0.2,
+      "cranking_voltage_dip_avg": 0.2,
+      "battery_age_years": 0.2,
+      "light_on_engine_off_events_7d": 0.2
+    },
+    "metrics": {},
+    "trained_at": "2026-07-03T19:44:14.375401+00:00",
+    "status": "trained",
+    "notes": "RUL survival model trained in 1087.0s on 18400 rows"
+  },
+  "tyre_wear_rul": {
+    "model_name": "tyre_wear_rul",
+    "algorithm": "Weibull AFT",
+    "target": "days_to_failure",
+    "training_samples": 18400,
+    "feature_names": [
+      "tyre_stress_cumulative",
+      "km_since_last_tyre_service",
+      "axle_imbalance_front",
+      "pressure_drop_rate_fl",
+      "tpms_deflation_count",
+      "lateral_g_95th_30d"
+    ],
+    "feature_importances": {
+      "tyre_stress_cumulative": 0.166667,
+      "km_since_last_tyre_service": 0.166667,
+      "axle_imbalance_front": 0.166667,
+      "pressure_drop_rate_fl": 0.166667,
+      "tpms_deflation_count": 0.166667,
+      "lateral_g_95th_30d": 0.166667
+    },
+    "metrics": {
+      "concordance_index": 0.5235
+    },
+    "trained_at": "2026-07-03T19:44:14.464488+00:00",
+    "status": "trained",
+    "notes": "RUL survival model trained in 1087.0s on 18400 rows"
+  },
+  "brake_wear": {
+    "model_name": "brake_wear",
+    "algorithm": "XGBoost + CoxPH",
+    "target": "days_to_brake_replacement",
+    "training_samples": 4800,
+    "feature_names": [
+      "brake_stress_cumulative",
+      "harsh_brake_rate_7d",
+      "harsh_brake_rate_30d",
+      "high_speed_stop_count_30d",
+      "avg_brake_intensity_7d",
+      "deceleration_g_95th_30d",
+      "brake_heat_proxy",
+      "brake_thermal_stress",
+      "km_since_last_brake_service",
+      "brake_fluid_warning_active",
+      "abs_activation_rate_30d",
+      "downhill_brake_stress",
+      "lateral_brake_stress",
+      "regen_fraction"
+    ],
+    "feature_importances": {
+      "km_since_last_brake_service": 0.907181,
+      "brake_thermal_stress": 0.03267,
+      "lateral_brake_stress": 0.020575,
+      "deceleration_g_95th_30d": 0.014806,
+      "brake_heat_proxy": 0.008853,
+      "downhill_brake_stress": 0.007865,
+      "brake_stress_cumulative": 0.005887,
+      "avg_brake_intensity_7d": 0.002164,
+      "harsh_brake_rate_7d": 0.0,
+      "harsh_brake_rate_30d": 0.0,
+      "high_speed_stop_count_30d": 0.0,
+      "brake_fluid_warning_active": 0.0,
+      "abs_activation_rate_30d": 0.0,
+      "regen_fraction": 0.0
+    },
+    "metrics": {
+      "cv_mae": 3.562,
+      "cv_rmse": 5.283,
+      "cv_auc": 1.0,
+      "recall_at_p80": 1.0,
+      "n_reg": 4800.0,
+      "n_clf": 4800.0
+    },
+    "trained_at": "2026-07-03T18:57:45.253563+00:00",
+    "status": "trained",
+    "notes": "Trained in 554.0s on 4800 rows via autopredict-v2"
+  },
+  "engine_oil": {
+    "model_name": "engine_oil",
+    "algorithm": "XGBoost + CoxPH",
+    "target": "days_until_oil_change",
+    "training_samples": 4000,
+    "feature_names": [
+      "km_since_oil_change",
+      "days_since_oil_change",
+      "cold_start_count_30d",
+      "high_rpm_duration_minutes_30d",
+      "coolant_overtemp_count_30d",
+      "avg_coolant_temp_7d",
+      "fuel_consumption_deviation_pct",
+      "idle_hours_30d",
+      "short_trip_fraction_30d",
+      "high_rpm_stress_index",
+      "oil_pressure_warning_active",
+      "mil_warning_active",
+      "gear_efficiency_score"
+    ],
+    "feature_importances": {
+      "coolant_overtemp_count_30d": 0.688842,
+      "avg_coolant_temp_7d": 0.093493,
+      "gear_efficiency_score": 0.046867,
+      "cold_start_count_30d": 0.041985,
+      "fuel_consumption_deviation_pct": 0.040731,
+      "idle_hours_30d": 0.037996,
+      "short_trip_fraction_30d": 0.02763,
+      "km_since_oil_change": 0.022456,
+      "days_since_oil_change": 0.0,
+      "high_rpm_duration_minutes_30d": 0.0,
+      "high_rpm_stress_index": 0.0,
+      "oil_pressure_warning_active": 0.0,
+      "mil_warning_active": 0.0
+    },
+    "metrics": {
+      "cv_mae": 0.004,
+      "cv_rmse": 0.008,
+      "cv_auc": 1.0,
+      "n_reg": 4000.0,
+      "n_clf": 4000.0
+    },
+    "trained_at": "2026-07-03T19:02:23.297135+00:00",
+    "status": "trained",
+    "notes": "Trained in 278.0s on 4000 rows via autopredict-v2"
+  },
+  "hv_battery_soh": {
+    "model_name": "hv_battery_soh",
+    "algorithm": "XGBoost + Ridge + IsolationForest",
+    "target": "soh_estimated",
+    "training_samples": 1800,
+    "feature_names": [
+      "hv_applicable",
+      "fuel_type",
+      "soc_mean_7d",
+      "soh_mean",
+      "soh_estimated",
+      "soh_trend_slope_90d",
+      "cell_voltage_spread",
+      "cell_voltage_spread_trend_30d",
+      "cell_voltage_spread_p95_30d",
+      "avg_cell_temp_delta",
+      "dc_charge_count_30d",
+      "charge_duration_deviation",
+      "avg_charge_c_rate_30d",
+      "thermal_fault_count_30d",
+      "bms_cmu_fault_count_30d",
+      "bms_cv_fault_count_30d",
+      "bms_pt_fault_count_30d",
+      "max_fault_severity_30d",
+      "dcdc_temp_max_30d",
+      "dc_charge_ratio_30d",
+      "isolation_resistance_min_30d",
+      "range_per_kwh_30d_trend",
+      "soc_current",
+      "soh_current",
+      "thermal_cold",
+      "thermal_moderate",
+      "thermal_hot",
+      "thermal_extreme",
+      "elevation_stress",
+      "days_since_last_bms_ota"
+    ],
+    "feature_importances": {},
+    "metrics": {
+      "lr_mae": 3.545,
+      "lr_rmse": 4.211,
+      "cv_auc": 0.8718,
+      "n_ev": 1800.0
+    },
+    "trained_at": "2026-07-04T01:57:45.281793+00:00",
+    "status": "trained",
+    "notes": ""
+  },
+  "battery_12v": {
+    "model_name": "battery_12v",
+    "algorithm": "XGBoost + LogisticRegression",
+    "target": "days_to_12v_failure",
+    "training_samples": 4800,
+    "feature_names": [
+      "resting_voltage_7d_avg",
+      "resting_voltage_trend_14d",
+      "overnight_voltage_drop_avg",
+      "cold_voltage_delta",
+      "voltage_under_load_proxy",
+      "parasitic_drain_rate_7d",
+      "battery_age_days",
+      "total_km_proxy",
+      "light_on_engine_off_events_7d",
+      "ac_acc_drain_minutes_7d",
+      "avg_outside_temp_7d",
+      "voltage_current"
+    ],
+    "feature_importances": {
+      "battery_age_days": 0.837923,
+      "total_km_proxy": 0.061292,
+      "cold_voltage_delta": 0.02127,
+      "voltage_under_load_proxy": 0.020481,
+      "avg_outside_temp_7d": 0.020209,
+      "overnight_voltage_drop_avg": 0.013201,
+      "resting_voltage_7d_avg": 0.008661,
+      "voltage_current": 0.006919,
+      "resting_voltage_trend_14d": 0.005597,
+      "ac_acc_drain_minutes_7d": 0.004446,
+      "parasitic_drain_rate_7d": 0.0,
+      "light_on_engine_off_events_7d": 0.0
+    },
+    "metrics": {
+      "lr_cv_auc": 1.0,
+      "xgb_cv_auc": 1.0,
+      "ensemble_train_auc": 1.0,
+      "n_clf": 4800.0
+    },
+    "trained_at": "2026-07-03T19:11:39.311569+00:00",
+    "status": "trained",
+    "notes": "Trained in 310.7s on 4800 rows via autopredict-v2"
+  },
+  "tyre_wear": {
+    "model_name": "tyre_wear",
+    "algorithm": "LightGBM + XGBoost",
+    "target": "days_to_tyre_replacement",
+    "training_samples": 4800,
+    "feature_names": [
+      "pressure_fl_7d_avg",
+      "pressure_fr_7d_avg",
+      "pressure_rl_7d_avg",
+      "pressure_rr_7d_avg",
+      "pressure_fl_trend_14d",
+      "pressure_fr_trend_14d",
+      "pressure_rl_trend_14d",
+      "pressure_rr_trend_14d",
+      "pressure_fl_temp_corrected",
+      "pressure_fr_temp_corrected",
+      "pressure_rl_temp_corrected",
+      "pressure_rr_temp_corrected",
+      "axle_imbalance_front",
+      "axle_imbalance_rear",
+      "pressure_drop_rate_fl",
+      "pressure_drop_rate_fr",
+      "pressure_drop_rate_rl",
+      "pressure_drop_rate_rr",
+      "tpms_status",
+      "tpms_deflation_count",
+      "tyre_blast_risk_score",
+      "lateral_g_95th_30d",
+      "harsh_brake_per_100km_30d",
+      "sudden_turn_per_100km_30d",
+      "km_since_last_tyre_service",
+      "avg_speed_30d",
+      "tyre_stress_cumulative"
+    ],
+    "feature_importances": {},
+    "metrics": {
+      "cv_mae": 0.0,
+      "cv_rmse": 0.0,
+      "n_reg": 4800.0,
+      "n_clf": 4800.0
+    },
+    "trained_at": "2026-07-03T19:16:38.286851+00:00",
+    "status": "trained",
+    "notes": "Trained in 299.0s on 4800 rows via autopredict-v2"
+  },
+  "fuel_anomaly": {
+    "model_name": "fuel_anomaly",
+    "algorithm": "IsolationForest",
+    "target": "anomaly_score",
+    "training_samples": 4800,
+    "feature_names": [
+      "fuel_consumption_deviation_pct",
+      "rpm_to_speed_ratio_anomaly",
+      "high_rpm_stress_index",
+      "coolant_overtemp_count_30d",
+      "oil_pressure_warning_active",
+      "mil_warning_active",
+      "idle_hours_30d",
+      "cold_start_count_30d"
+    ],
+    "feature_importances": {},
+    "metrics": {
+      "anomaly_rate": 0.05,
+      "avg_anomaly_score": -0.4664,
+      "n_samples": 4800.0,
+      "n_features": 8.0
+    },
+    "trained_at": "2026-07-03T19:21:01.734429+00:00",
+    "status": "trained",
+    "notes": "Trained in 263.4s on 4800 rows via autopredict-v2"
+  },
+  "driver_score": {
+    "model_name": "driver_score",
+    "algorithm": "XGBoost Regressor",
+    "target": "composite_drive_score",
+    "training_samples": 4800,
+    "feature_names": [
+      "harsh_accel_rate_30d",
+      "harsh_brake_rate_30d",
+      "overspeed_80_fraction_30d",
+      "overspeed_120_count_30d",
+      "idle_fraction_30d",
+      "overrev_rate_30d",
+      "lugging_rate_30d",
+      "avg_speed_30d",
+      "sudden_turn_rate_30d",
+      "night_driving_fraction_30d",
+      "fuel_efficiency_score",
+      "peer_percentile"
+    ],
+    "feature_importances": {
+      "fuel_efficiency_score": 0.703637,
+      "harsh_brake_rate_30d": 0.143453,
+      "harsh_accel_rate_30d": 0.138537,
+      "lugging_rate_30d": 0.011951,
+      "idle_fraction_30d": 0.001899,
+      "sudden_turn_rate_30d": 0.000244,
+      "overspeed_80_fraction_30d": 0.000226,
+      "avg_speed_30d": 5.2e-05,
+      "overspeed_120_count_30d": 0.0,
+      "overrev_rate_30d": 0.0,
+      "night_driving_fraction_30d": 0.0,
+      "peer_percentile": 0.0
+    },
+    "metrics": {
+      "cv_mae": 0.061,
+      "cv_rmse": 0.14,
+      "n_reg": 4800.0,
+      "n_clf": 4800.0
+    },
+    "trained_at": "2026-07-03T19:26:07.210201+00:00",
+    "status": "trained",
+    "notes": "Trained in 305.5s on 4800 rows via autopredict-v2"
+  },
+  "inventory_demand": {
+    "model_name": "inventory_demand",
+    "algorithm": "LightGBM Regressor",
+    "target": "units_next_30d",
+    "training_samples": 66,
+    "feature_names": [
+      "part_code",
+      "avg_monthly_units_12m",
+      "consumption_trend_slope",
+      "seasonal_index",
+      "supplier_lead_time_days",
+      "n_vehicles",
+      "replace_km",
+      "per_service_qty",
+      "interval_demand_30d",
+      "history_months"
+    ],
+    "feature_importances": {},
+    "metrics": {
+      "mae": 5.758188,
+      "n_rows": 66.0
+    },
+    "trained_at": "2026-07-03T19:44:14.799683+00:00",
+    "status": "trained",
+    "notes": "Inventory demand LightGBM trained in 0.3s, MAE=5.76"
+  }
+}

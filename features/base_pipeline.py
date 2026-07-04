@@ -31,58 +31,95 @@ INFLUX_BUCKET = os.getenv("INFLUXDB_BUCKET", "telemetry")
 # the internal names used by all pipelines.
 
 _COL_ALIASES: dict[str, str] = {
-    # identity / timestamp
+    # ── Identity / timestamp ─────────────────────────────────────────────────
     "VIN":                    "vin",
     "StartTime-TimeStamp":    "timestamp",
     "StartTime-Date":         "date",
-    "_time":                  "timestamp",   # InfluxDB Flux result
-    # motion
-    "VehSpeed":               "speed",          "veh_speed":              "speed",
-    "VehSysPwrMod":           "sys_pwr_mod",    "veh_sys_pwr_mod":        "sys_pwr_mod",
-    "VehRPM":                 "rpm",            "veh_rpm":                "rpm",
-    "VehGearPos":             "gear_pos",       "veh_gear_pos":           "gear_pos",
-    "VehSteeringAngle":       "steering_angle", "veh_steering_angle":     "steering_angle",
-    "VehAccelPos":            "accel_pos",      "veh_accel_pos":          "accel_pos",
-    "VehBrakePos":            "brake_pos",      "veh_brake_pos":          "brake_pos",
-    "VehAccelX":              "accel_x",        "veh_accel_x":            "accel_x",
-    # powertrain
-    "VehBatt":                "batt_12v",       "veh_batt":               "batt_12v",
-    "VehOdo":                 "odometer",       "veh_odo":                "odometer",
+    "_time":                  "timestamp",
+
+    # ── Motion — real TBox camelCase names (generator output) ───────────────
+    "vehSpeed":               "speed",          "VehSpeed":               "speed",          "veh_speed":           "speed",
+    "vehSysPwrMod":           "sys_pwr_mod",    "VehSysPwrMod":           "sys_pwr_mod",    "veh_sys_pwr_mod":     "sys_pwr_mod",
+    "vehRPM":                 "rpm",            "VehRPM":                 "rpm",            "veh_rpm":             "rpm",
+    "vehGearPos":             "gear_pos",       "VehGearPos":             "gear_pos",       "veh_gear_pos":        "gear_pos",
+    "vehSteeringAngle":       "steering_angle", "VehSteeringAngle":       "steering_angle", "veh_steering_angle":  "steering_angle",
+    "vehAccelPos":            "accel_pos",      "VehAccelPos":            "accel_pos",      "veh_accel_pos":       "accel_pos",
+    "vehBrakePos":            "brake_pos",      "VehBrakePos":            "brake_pos",      "veh_brake_pos":       "brake_pos",
+    # Real TBox accelerometer names (spec: tboxAccelX/Y/Z)
+    "tboxAccelX":             "accel_x",        "VehAccelX":              "accel_x",        "veh_accel_x":         "accel_x",
+    "tboxAccelY":             "accel_y",        "tbox_accel_y":           "accel_y",
+    "tboxAccelZ":             "accel_z",        "tbox_accel_z":           "accel_z",
+
+    # ── Powertrain ─────────────────────────────────────────────────────────
+    "vehBatt":                "batt_12v",       "VehBatt":                "batt_12v",       "veh_batt":            "batt_12v",
+    "vehOdo":                 "odometer",       "VehOdo":                 "odometer",       "veh_odo":             "odometer",
     "FuelTankLevel":          "fuel_level",     "fuel_tank_level":        "fuel_level",
-    "VehFuelConsumed":        "fuel_consumed",  "veh_fuel_consumed":      "fuel_consumed",
-    "EnginOilLifePct":        "oil_life_pct",   "engin_oil_life_pct":     "oil_life_pct",
-    "VehCoolantTemp":         "coolant_temp",   "veh_coolant_temp":       "coolant_temp",
-    "VehOutsideTemp":         "outside_temp",   "veh_outside_temp":       "outside_temp",
-    "VehEngineOilTemp":       "oil_temp",       "veh_engine_oil_temp":    "oil_temp",
-    # brakes
-    "BrakePadFrontMM":        "brake_front_mm", "brake_pad_front_mm":     "brake_front_mm",
-    "BrakePadRearMM":         "brake_rear_mm",  "brake_pad_rear_mm":      "brake_rear_mm",
-    "BrakeFluidPct":          "brake_fluid_pct","brake_fluid_pct":        "brake_fluid_pct",
-    # HV battery
-    "BMSPackVol":             "bms_pack_vol",   "bms_pack_vol":           "bms_pack_vol",
-    "BMSPackCrnt":            "bms_pack_crnt",  "bms_pack_crnt":          "bms_pack_crnt",
-    "BMSPackSOC":             "soc",            "bms_pack_soc":           "soc",
-    "BMSPackSOH":             "soh",            "bms_pack_soh":           "soh",
-    "BMSCellMaxVol":          "cell_max_vol",   "bms_cell_max_vol":       "cell_max_vol",
-    "BMSCellMinVol":          "cell_min_vol",   "bms_cell_min_vol":       "cell_min_vol",
-    "BMSCellMaxTemp":         "cell_max_temp",  "bms_cell_max_temp":      "cell_max_temp",
-    "BMSCellMinTemp":         "cell_min_temp",  "bms_cell_min_temp":      "cell_min_temp",
-    "SOCValid":               "soc_valid",      "soc_valid":              "soc_valid",
-    # tyres
-    "TyrePressureFL":         "tyre_fl",        "tyre_pressure_fl":       "tyre_fl",
-    "TyrePressureFR":         "tyre_fr",        "tyre_pressure_fr":       "tyre_fr",
-    "TyrePressureRL":         "tyre_rl",        "tyre_pressure_rl":       "tyre_rl",
-    "TyrePressureRR":         "tyre_rr",        "tyre_pressure_rr":       "tyre_rr",
-    "TyreTempFL":             "tyre_temp_fl",   "tyre_temp_fl":           "tyre_temp_fl",
-    "TyreTempFR":             "tyre_temp_fr",   "tyre_temp_fr":           "tyre_temp_fr",
-    "TyreTempRL":             "tyre_temp_rl",   "tyre_temp_rl":           "tyre_temp_rl",
-    "TyreTempRR":             "tyre_temp_rr",   "tyre_temp_rr":           "tyre_temp_rr",
-    # GNSS
-    "GNSSLat":                "lat",            "gnss_lat":               "lat",
-    "GNSSLong":               "long",           "gnss_long":              "long",
-    "GNSSAlt":                "alt",            "gnss_alt":               "alt",
-    "GNSSSats":               "gnss_sats",      "gnss_sats":              "gnss_sats",
-    # labels (synthetic data)
+    "vehFuelConsumed":        "fuel_consumed",  "VehFuelConsumed":        "fuel_consumed",  "veh_fuel_consumed":   "fuel_consumed",
+    "vehCoolantTemp":         "coolant_temp",   "VehCoolantTemp":         "coolant_temp",   "veh_coolant_temp":    "coolant_temp",
+    "vehOutsideTemp":         "outside_temp",   "VehOutsideTemp":         "outside_temp",   "veh_outside_temp":    "outside_temp",
+    "vehInsideTemp":          "inside_temp",    "veh_inside_temp":        "inside_temp",
+
+    # ── HVAC ──────────────────────────────────────────────────────────────
+    "vehAC":                  "ac_on",          "VehAC":                  "ac_on",
+    "vehACFanSpeed":          "ac_fan_speed",   "VehACFanSpeed":          "ac_fan_speed",
+
+    # ── Lighting ──────────────────────────────────────────────────────────
+    "vehDipLight":            "dip_light",
+    "vehMainLight":           "main_light",
+    "vehSideLight":           "side_light",
+    "vehRainDetected":        "rain_detected",
+    "vehNightDetected":       "night_detected",
+    "vehHorn":                "horn",
+    "vehSeatBeltDrv":         "seatbelt_drv",
+
+    # ── Real binary warning signals (ICE + common) ────────────────────────
+    "vehOilPressureWarning":  "oil_pressure_warning",
+    "vehMILWarning":          "mil_warning",
+    "vehBrkFludLvlLow":       "brake_fluid_low",
+    "vehABSF":                "abs_failure",
+
+    # ── Real tyre column names per TBox Big Data Spec ─────────────────────
+    "frontLeftTyrePressure":   "tyre_fl",   "TyrePressureFL":  "tyre_fl",   "tyre_pressure_fl":  "tyre_fl",
+    "frontRrightTyrePressure": "tyre_fr",   "TyrePressureFR":  "tyre_fr",   "tyre_pressure_fr":  "tyre_fr",
+    "rearLeftTyrePressure":    "tyre_rl",   "TyrePressureRL":  "tyre_rl",   "tyre_pressure_rl":  "tyre_rl",
+    "rearRightTyrePressure":   "tyre_rr",   "TyrePressureRR":  "tyre_rr",   "tyre_pressure_rr":  "tyre_rr",
+    "wheelTyreMonitorStatus":  "tpms_status",
+
+    # ── HV battery — real BMS column names per TBox spec ─────────────────
+    "vehBMSPackVol":          "bms_pack_vol",       "BMSPackVol":         "bms_pack_vol",
+    "vehBMSPackCrnt":         "bms_pack_crnt",      "BMSPackCrnt":        "bms_pack_crnt",
+    "vehBMSPackSOC":          "soc",                "BMSPackSOC":         "soc",           "bms_pack_soc": "soc",
+    "vehBMSPackSOCV":         "soc_valid",          "SOCValid":           "soc_valid",
+    "vehBMSCellMaxVol":       "cell_max_vol",       "BMSCellMaxVol":      "cell_max_vol",
+    "vehBMSCellMinVol":       "cell_min_vol",       "BMSCellMinVol":      "cell_min_vol",
+    "vehBMSCellMaxTem":       "cell_max_temp",      "BMSCellMaxTemp":     "cell_max_temp",
+    "vehBMSCellMinTem":       "cell_min_temp",      "BMSCellMinTemp":     "cell_min_temp",
+    "vehHVDCDCTem":           "dcdc_temp",
+    "vehBMSCMUFlt":           "bms_cmu_fault",
+    "vehBMSCellVoltFlt":      "bms_cell_volt_fault",
+    "vehBMSPackTemFlt":       "bms_pack_temp_fault",
+    "vehBMSHVILClsd":         "bms_hvil_closed",
+    "vehBMSBscSta":           "bms_status",
+
+    # ── EV charging signals ───────────────────────────────────────────────
+    "chargingGunIsConnected":     "charging_gun_connected",
+    "vehIsCharging":              "is_charging",
+    "dcOrAC":                     "dc_or_ac",
+    "usedBatterySinceLastCharge": "used_battery_since_charge",
+    "mileageSinceLastCharge":     "mileage_since_charge",
+    "vehElecRange":               "elec_range",
+    "vehEPTRdy":                  "ept_ready",
+    "vehTMInvtrTem":              "motor_inv_temp",
+    "vehTMSttrTem":               "motor_str_temp",
+
+    # ── GNSS — real lowercase spec names + old PascalCase ────────────────
+    "gnssLat":                "lat",       "GNSSLat":    "lat",    "gnss_lat":   "lat",
+    "gnssLong":               "long",      "GNSSLong":   "long",   "gnss_long":  "long",
+    "gnssAlt":                "alt",       "GNSSAlt":    "alt",    "gnss_alt":   "alt",
+    "gnssHead":               "gnss_head", "GNSSHead":   "gnss_head",
+    "gnssSats":               "gnss_sats", "GNSSSats":   "gnss_sats",
+
+    # ── Labels (synthetic only) ───────────────────────────────────────────
     "_failure_type":          "failure_type",
     "_failure_intensity":     "failure_intensity",
 }

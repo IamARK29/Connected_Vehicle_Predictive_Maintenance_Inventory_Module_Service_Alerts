@@ -103,26 +103,32 @@ def _evaluate_rules(vin: str, state: dict) -> list[Alert]:
             data_snapshot_json=json.dumps(snap),
         ))
 
-    speed       = float(_get(state, "VehSpeed", "veh_speed", "speed", default=0))
-    pwr_mode    = _get(state, "VehSysPwrMod", "veh_sys_pwr_mod", "power_mode", default="OFF")
-    batt_12v    = float(_get(state, "VehBatt", "veh_batt", "battery_12v_v", default=12.6))
-    bms_temp_flt= int(_get(state, "vehBMSPackTemFlt", "bms_pack_temp_flt", default=0))
-    cmu_flt     = int(_get(state, "vehBMSCMUFlt", "bms_cmu_flt", default=0))
+    speed          = float(_get(state, "vehSpeed", "VehSpeed", "veh_speed", "speed", default=0))
+    pwr_mode       = _get(state, "vehSysPwrMod", "VehSysPwrMod", "veh_sys_pwr_mod", "power_mode", default="OFF")
+    batt_12v       = float(_get(state, "vehBatt", "VehBatt", "veh_batt", "battery_12v_v", default=12.6))
+    bms_temp_flt   = int(_get(state, "vehBMSPackTemFlt", "bms_pack_temp_flt", default=0))
+    cmu_flt        = int(_get(state, "vehBMSCMUFlt", "bms_cmu_flt", default=0))
     brake_fluid_low = bool(_get(state, "vehBrkFludLvlLow", "brake_fluid_low", default=False))
     oil_pressure_warn = bool(_get(state, "vehOilPressureWarning", "oil_pressure_warning", default=False))
-    tyre_monitor = int(_get(state, "wheelTyreMonitorStatus", "tyre_monitor_status", default=0))
-    coolant_temp = float(_get(state, "VehCoolantTemp", "coolant_temp", default=90))
-    oil_life_pct = float(_get(state, "EnginOilLifePct", "engine_oil_life_pct", "oil_life_pct", default=100))
-    brake_front  = float(_get(state, "BrakePadFrontMM", "brake_pad_front_mm", "brake_front_mm", default=10))
-    brake_rear   = float(_get(state, "BrakePadRearMM",  "brake_pad_rear_mm",  "brake_rear_mm",  default=10))
-    brake_fluid  = float(_get(state, "BrakeFluidPct", "brake_fluid_pct", default=100))
-    soc          = float(_get(state, "BMSPackSOC", "bms_pack_soc", "soc", default=50))
-    soh          = float(_get(state, "BMSPackSOH", "bms_pack_soh", "soh", default=100))
-    cell_max_temp= float(_get(state, "BMSCellMaxTemp", "bms_cell_max_temp", default=30))
-    cell_vol_max = float(_get(state, "BMSCellMaxVol", "bms_cell_max_vol", default=3.7))
-    cell_vol_min = float(_get(state, "BMSCellMinVol", "bms_cell_min_vol", default=3.7))
-    fuel_pct     = float(_get(state, "FuelTankLevel", "fuel_level_pct", "fuel_tank_level", default=50))
-    off_minutes  = float(_get(state, "off_duration_minutes", default=0))
+    tyre_monitor   = int(_get(state, "wheelTyreMonitorStatus", "tyre_monitor_status", default=0))
+    coolant_temp   = float(_get(state, "vehCoolantTemp", "VehCoolantTemp", "coolant_temp", default=90))
+    fuel_pct       = float(_get(state, "FuelTankLevel", "fuel_level_pct", "fuel_tank_level", default=50))
+    off_minutes    = float(_get(state, "off_duration_minutes", default=0))
+    soc            = float(_get(state, "vehBMSPackSOC", "BMSPackSOC", "bms_pack_soc", "soc", default=50))
+    # SOH from feature pipeline Coulomb-counting estimate; no raw SOH signal exists in TBox
+    soh            = float(_get(state, "soh_estimated", "BMSPackSOH", "bms_pack_soh", "soh", default=100))
+    # BMS cell signals — real TBox spec uses "Tem" not "Temp"
+    cell_max_temp  = float(_get(state, "vehBMSCellMaxTem", "BMSCellMaxTemp", "bms_cell_max_temp", default=30))
+    cell_vol_max   = float(_get(state, "vehBMSCellMaxVol", "BMSCellMaxVol", "bms_cell_max_vol", default=3.7))
+    cell_vol_min   = float(_get(state, "vehBMSCellMinVol", "BMSCellMinVol", "bms_cell_min_vol", default=3.7))
+    # Brake wear — derived from DMS service history km + ML pipeline flags; no pad-mm signal in TBox
+    km_since_brake = float(_get(state, "km_since_last_brake_service", "km_since_brake_service", default=0))
+    brake_urgent   = bool(_get(state, "brake_replacement_within_7_days", default=False))
+    brake_due_30d  = bool(_get(state, "brake_replacement_within_30_days", default=False))
+    # Engine oil — derived from DMS km + physics degradation index; no oil-life-% signal in TBox
+    km_since_oil   = float(_get(state, "km_since_oil_change", default=0))
+    oil_change_14d = bool(_get(state, "oil_change_due_within_14", default=False))
+    oil_degrad     = float(_get(state, "oil_degradation_index", default=0.0))
 
     # ── CRITICAL rules ────────────────────────────────────────────────────────
 
@@ -139,7 +145,7 @@ def _evaluate_rules(vin: str, state: dict) -> list[Alert]:
             cooldown_hours=0.0,
         ))
 
-    if brake_fluid_low or brake_fluid < 10:
+    if brake_fluid_low:
         _add(_Rule(
             alert_type="LOW_BRAKE_FLUID",
             severity="CRITICAL",
@@ -175,14 +181,13 @@ def _evaluate_rules(vin: str, state: dict) -> list[Alert]:
             cost_max=40_000,
         ))
 
-    if min(brake_front, brake_rear) < 2.0:
-        pos = "front" if brake_front < brake_rear else "rear"
+    if brake_urgent or km_since_brake > 35_000:
         _add(_Rule(
             alert_type="BRAKE_PAD_CRITICAL",
             severity="CRITICAL",
-            title=f"Critical: {pos.title()} Brake Pads Worn Out",
-            message_customer=f"Your {pos} brake pads are critically thin. Schedule immediate replacement.",
-            message_dealer=f"{pos.title()} brake pad <2mm. Immediate pad replacement required. Inspect rotors.",
+            title="Critical: Brake Pads Require Immediate Replacement",
+            message_customer="Brake pads are critically worn based on usage analysis. Schedule immediate replacement to maintain safe braking.",
+            message_dealer=f"km_since_last_brake_service={km_since_brake:.0f} km or ML urgency flag active. Immediate pad replacement required. Inspect rotors and discs.",
             recommended_action="Avoid hard braking. Schedule service immediately.",
             cost_min=3_000,
             cost_max=15_000,
@@ -278,27 +283,25 @@ def _evaluate_rules(vin: str, state: dict) -> list[Alert]:
 
     # ── MEDIUM rules ──────────────────────────────────────────────────────────
 
-    if 2.0 <= min(brake_front, brake_rear) < 4.0:
-        pos = "front" if brake_front <= brake_rear else "rear"
-        thin = min(brake_front, brake_rear)
+    if brake_due_30d or (km_since_brake > 28_000 and not brake_urgent):
         _add(_Rule(
             alert_type="BRAKE_PAD_WARNING",
             severity="MEDIUM",
-            title=f"{pos.title()} Brake Pads Wearing Low ({thin:.1f}mm)",
-            message_customer=f"Your {pos} brake pads are wearing low. Plan a brake inspection at your next service.",
-            message_dealer=f"{pos.title()} pad at {thin:.1f}mm. Schedule replacement within next 5,000 km.",
+            title=f"Brake Pads Wearing Low ({km_since_brake:.0f} km since last service)",
+            message_customer="Brake pads will need replacement soon based on usage analysis. Plan a brake inspection at your next service.",
+            message_dealer=f"km_since_last_brake_service={km_since_brake:.0f} km. Schedule replacement within next 5,000 km.",
             recommended_action="Book service within 30 days.",
             cost_min=3_000,
             cost_max=12_000,
         ), confidence=0.9)
 
-    if 10 < oil_life_pct <= 20:
+    if oil_change_14d or km_since_oil > 6_500:
         _add(_Rule(
             alert_type="ENGINE_OIL_LOW",
             severity="MEDIUM",
-            title=f"Engine Oil Life Low ({oil_life_pct:.0f}%)",
-            message_customer=f"Engine oil life is at {oil_life_pct:.0f}%. Schedule an oil change soon.",
-            message_dealer=f"Oil life {oil_life_pct:.0f}%. Due for change within next 1,000 km.",
+            title=f"Engine Oil Change Due ({km_since_oil:.0f} km since last change)",
+            message_customer="Engine oil change is due. Schedule a service appointment soon to protect engine life.",
+            message_dealer=f"km_since_oil_change={km_since_oil:.0f}, degradation_index={oil_degrad:.2f}. Oil change required.",
             recommended_action="Schedule oil change at next service opportunity.",
             cost_min=2_000,
             cost_max=6_000,
@@ -355,13 +358,13 @@ def _evaluate_rules(vin: str, state: dict) -> list[Alert]:
 
     # ── LOW rules ─────────────────────────────────────────────────────────────
 
-    if oil_life_pct > 20 and oil_life_pct <= 30:
+    if oil_degrad > 0.55 and not (oil_change_14d or km_since_oil > 6_500):
         _add(_Rule(
             alert_type="ENGINE_OIL_ADVISORY",
             severity="LOW",
-            title=f"Engine Oil Change Advisory ({oil_life_pct:.0f}% remaining)",
-            message_customer=f"Engine oil at {oil_life_pct:.0f}% life. An oil change will be needed within the next 2,500 km.",
-            message_dealer=f"Oil life {oil_life_pct:.0f}%. Proactive reminder sent to customer.",
+            title=f"Engine Oil Change Advisory (degradation: {oil_degrad:.0%})",
+            message_customer="Engine oil is approaching end of service life. An oil change will be needed within the next 2,500 km.",
+            message_dealer=f"Oil degradation index={oil_degrad:.2f}, km_since_oil={km_since_oil:.0f}. Proactive reminder sent to customer.",
             recommended_action="Plan oil change at next routine service.",
             cost_min=2_000,
             cost_max=5_000,

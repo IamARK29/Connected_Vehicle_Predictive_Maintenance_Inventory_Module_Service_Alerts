@@ -192,9 +192,11 @@ class AutoPredictDemo:
                 "vehBMSPackTemFlt": 3,
                 "VehBatt": 12.6,
                 "VehCoolantTemp": 90,
-                "BrakePadFrontMM": 8.0,
-                "BrakePadRearMM": 8.0,
-                "BrakeFluidPct": 95,
+                # Real TBox-derived brake and oil signals (no fake pad mm or fluid %)
+                "km_since_last_brake_service": 5_000,
+                "brake_replacement_within_7_days": False,
+                "km_since_oil_change": 2_000,
+                "oil_degradation_index": 0.20,
             }
             alerts = engine.evaluate(DEMO_VIN, state)
             critical = [a for a in alerts if a.severity == "CRITICAL"]

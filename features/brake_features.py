@@ -97,8 +97,7 @@ class BrakeFeaturePipeline(FeaturePipeline):
 
         # ── Additional B2 features ─────────────────────────────────────────
         effective_brake_km       = float(odo30.max() - odo30.min()) if len(odo30) > 1 else 0.0
-        abs_activation_rate_30d  = 0.0   # ABS data unavailable
-        esc_activation_rate_30d  = 0.0   # ESC data unavailable
+        esc_activation_rate_30d  = 0.0   # ESC status not in TBox spec
         brake_pedal_travel_proxy = float(bpos30[bpos30 > 10].mean()) if (bpos30 > 10).any() else 0.0
         brake_thermal_stress     = float((bpos30.fillna(0) * speed30.fillna(0) ** 2).sum() / 1_000_000)
         wot_event_count_30d      = int((apos30 > 225).sum())   # raw > 225 = ~90% throttle
@@ -107,7 +106,8 @@ class BrakeFeaturePipeline(FeaturePipeline):
         # ── Service-based features ─────────────────────────────────────────
         km_since_last_brake_service = float(odo.iloc[-1] - last_service_odo) if (
             last_service_odo is not None and len(odo) > 0
-        ) else np.nan
+        ) else (float(odo.iloc[-1]) % 45_000.0 if len(odo) > 0 else 0.0)
+        # When service history unknown, modulo 45k simulates position in current brake lifecycle
         days_since_last_brake_service = 0.0   # injected by refresh job from service history
 
         # ── 95th-pctile decel / brake heat ────────────────────────────────
@@ -119,16 +119,45 @@ class BrakeFeaturePipeline(FeaturePipeline):
             decel_g_95th_30d = 0.0
         brake_heat_proxy = float((bpos.fillna(0) * speed.fillna(0) ** 2).sum() / 1_000_000)
 
-        # ── Current state ──────────────────────────────────────────────────
-        brake_front_mm             = float(df["brake_front_mm"].iloc[-1]) if "brake_front_mm" in df.columns else np.nan
-        brake_rear_mm              = float(df["brake_rear_mm"].iloc[-1])  if "brake_rear_mm"  in df.columns else np.nan
-        brake_fluid_pct            = float(df["brake_fluid_pct"].iloc[-1]) if "brake_fluid_pct" in df.columns else np.nan
-        brake_fluid_warning_active = int(brake_fluid_pct < 80) if not np.isnan(brake_fluid_pct) else 0
+        # ── Real binary warning signals ────────────────────────────────────
+        # vehBrkFludLvlLow: binary from TBox spec (replaces fake BrakeFluidPct)
+        brake_fluid_low = df["brake_fluid_low"] if "brake_fluid_low" in df.columns else pd.Series(0, index=df.index)
+        brake_fluid_warning_active = int(brake_fluid_low.fillna(0).any())
 
-        # ── Labels ────────────────────────────────────────────────────────
-        days_to_failure, within_30 = self._label_days_to_failure(
+        # ── ABS activation rate from real vehABSF signal ─────────────────
+        abs30 = d30["abs_failure"].fillna(0) if "abs_failure" in d30.columns else pd.Series(0, index=d30.index)
+        abs_activation_rate_30d = self._rate_per_100km(abs30.to_numpy().astype(bool), odo30)
+
+        # ── Downhill brake stress: heavy braking on steep downslope ───────
+        # tboxAccelZ < -0.1 g (downhill) while brake_pos > 30
+        az30 = d30["accel_z"].fillna(0) if "accel_z" in d30.columns else pd.Series(0, index=d30.index)
+        downhill_mask = (az30 < -0.1) & (bpos30 > 30)
+        downhill_brake_stress = float((downhill_mask * bpos30.fillna(0) * speed30.fillna(0)).sum() / 1e6)
+
+        # ── Lateral G stress on brake pads (cornering under braking) ──────
+        ay30 = d30["accel_y"].fillna(0) if "accel_y" in d30.columns else pd.Series(0, index=d30.index)
+        lateral_brake_stress = float((ay30.abs() * bpos30.fillna(0)).sum() / 1e4)
+
+        # brake_front_mm and brake_rear_mm do not exist in TBox; use NaN
+        brake_front_mm = np.nan
+        brake_rear_mm  = np.nan
+        brake_fluid_pct = np.nan
+
+        # ── Labels — physics + service-event self-supervision ─────────────
+        # Physics: brake pads typically last 45,000 km. At current daily km rate,
+        # extrapolate days until km_since_last_brake_service hits 45,000 km.
+        _BRAKE_LIFE_KM = 45_000.0
+        daily_km_30d = float(odo30.max() - odo30.min()) / 30 if len(odo30) > 1 else 40.0
+        remaining_km = max(0.0, _BRAKE_LIFE_KM - km_since_last_brake_service)
+        days_to_physics = float(np.clip(remaining_km / max(daily_km_30d, 1.0), 0, 730))
+        within_physics  = int(km_since_last_brake_service >= 38_000 or brake_fluid_warning_active == 1)
+
+        days_to_failure, within_svc = self._label_days_to_failure(
             vin, label_df, "brake_degradation", t_max
         )
+        if np.isnan(days_to_failure):
+            days_to_failure = days_to_physics
+        within_30 = int(within_svc or within_physics)
 
         return self._row(vin, t_max, {
             "brake_stress_cumulative":        brake_stress_cumulative,
@@ -149,6 +178,11 @@ class BrakeFeaturePipeline(FeaturePipeline):
             "deceleration_g_95th_30d":        decel_g_95th_30d,
             "brake_heat_proxy":               brake_heat_proxy,
             "brake_fluid_warning_active":     brake_fluid_warning_active,
+            # Real binary signals (replaces fake pad mm / fluid pct)
+            "brake_fluid_low_active":         brake_fluid_warning_active,
+            "downhill_brake_stress":          downhill_brake_stress,
+            "lateral_brake_stress":           lateral_brake_stress,
+            # These do not exist in TBox; kept for API compat as NaN
             "brake_front_mm":                 brake_front_mm,
             "brake_rear_mm":                  brake_rear_mm,
             "brake_fluid_pct":                brake_fluid_pct,

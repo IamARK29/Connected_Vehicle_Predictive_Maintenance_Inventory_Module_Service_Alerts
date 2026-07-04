@@ -2,14 +2,19 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useFleetAlerts } from '../api/hooks'
 import { AlertBadge } from '../components/AlertBadge'
+import { SortTh, useSortable } from '../components/SortHeader'
 import type { Severity, Alert } from '../types'
 
 const SEVERITIES: Array<Severity | 'ALL'> = ['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 const HOURS_OPTIONS = [24, 48, 168, 336, 720]
+const SEV_ORDER: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }
+
+type AlertSortKey = 'severity' | 'vin' | 'confidence_score' | 'triggered_at' | 'estimated_cost_min'
 
 export default function Alerts() {
   const [severity, setSeverity] = useState<Severity | 'ALL'>('ALL')
   const [hours, setHours]       = useState(168)
+  const { sortKey, sortDir, onSort } = useSortable<AlertSortKey>('triggered_at', 'desc')
 
   const { data: raw, isLoading, refetch } = useFleetAlerts(
     hours,
@@ -17,6 +22,16 @@ export default function Alerts() {
   )
 
   const alertsData: Alert[] = Array.isArray(raw?.alerts) ? raw.alerts : []
+
+  const sortedAlerts = [...alertsData].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    if (sortKey === 'severity') return (SEV_ORDER[a.severity] - SEV_ORDER[b.severity]) * dir
+    const av: any = (a as any)[sortKey] ?? ''
+    const bv: any = (b as any)[sortKey] ?? ''
+    if (av < bv) return -dir
+    if (av > bv) return  dir
+    return 0
+  })
 
   const severityCounts = SEVERITIES.slice(1).reduce((acc, s) => {
     acc[s] = alertsData.filter(a => a.severity === s).length
@@ -86,13 +101,17 @@ export default function Alerts() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                {['Severity', 'VIN', 'Alert', 'Recommended Action', 'Cost (INR)', 'Confidence', 'Time'].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                ))}
+                <SortTh label="Severity"   col="severity"           cur={sortKey} dir={sortDir} onSort={onSort} />
+                <SortTh label="VIN"        col="vin"                cur={sortKey} dir={sortDir} onSort={onSort} />
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Alert</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Recommended Action</th>
+                <SortTh label="Cost (INR)" col="estimated_cost_min" cur={sortKey} dir={sortDir} onSort={onSort} />
+                <SortTh label="Confidence" col="confidence_score"   cur={sortKey} dir={sortDir} onSort={onSort} />
+                <SortTh label="Time"       col="triggered_at"       cur={sortKey} dir={sortDir} onSort={onSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {alertsData.map((a, i) => (
+              {sortedAlerts.map((a, i) => (
                 <tr
                   key={i}
                   className={`hover:bg-gray-50 transition-colors ${

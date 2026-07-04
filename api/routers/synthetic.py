@@ -28,9 +28,10 @@ _PROGRESS: dict[str, dict] = {}
 
 
 class SyntheticGenRequest(BaseModel):
-    num_vehicles: int   = Field(default=10,   ge=1,   le=100)
-    num_days:     int   = Field(default=90,   ge=7,   le=365)
-    failure_rate: float = Field(default=0.05, ge=0.0, le=0.30)
+    num_vehicles:    int   = Field(default=10,   ge=1,   le=100)
+    num_days:        int   = Field(default=90,   ge=7,   le=365)
+    failure_rate:    float = Field(default=0.05, ge=0.0, le=0.30)
+    sessions_per_day: int  = Field(default=4,    ge=2,   le=24)
 
 
 def _set_progress(job_id: str, pct: int, message: str, result: dict | None = None) -> None:
@@ -62,7 +63,7 @@ def get_progress(job_id: str) -> dict:
 # Background: generate synthetic data
 # ---------------------------------------------------------------------------
 
-def _run_generation(job_id: str, num_vehicles: int, num_days: int, failure_rate: float) -> None:
+def _run_generation(job_id: str, num_vehicles: int, num_days: int, failure_rate: float, sessions_per_day: int = 4) -> None:
     import sys
     project_root = str(pathlib.Path(__file__).resolve().parents[2])
     if project_root not in sys.path:
@@ -80,6 +81,7 @@ def _run_generation(job_id: str, num_vehicles: int, num_days: int, failure_rate:
             num_vehicles=num_vehicles,
             num_days=num_days,
             failure_injection_rate=failure_rate,
+            sessions_per_day=sessions_per_day,
         )
         fleet_df = generate_fleet(cfg)
         fleet_df.to_csv(out_dir / "fleet.csv", index=False)
@@ -100,25 +102,43 @@ def _run_generation(job_id: str, num_vehicles: int, num_days: int, failure_rate:
         except Exception as exc:
             print(f"Service history skipped: {exc}")
 
-        _set_progress(job_id, 80, "Generating DTCs and OTA events...")
+        _set_progress(job_id, 78, "Generating DTC events...")
         try:
-            from synthetic.generate_dtcs import DTCGenerator
             import pandas as pd
+            from synthetic.generate_dtcs import DTCGenerator
             manifest_path = out_dir / "failures_manifest.csv"
-            if manifest_path.exists():
-                manifest_df = pd.read_csv(manifest_path)
-                DTCGenerator().generate(fleet_df, manifest_df)
+            manifest_df = pd.read_csv(manifest_path) if manifest_path.exists() else pd.DataFrame(
+                columns=["VIN", "failure_type", "failure_date"]
+            )
+            dtc_df = DTCGenerator().generate(fleet_df, manifest_df, num_days)
+            # Write explicitly to out_dir so it's always in the right place
+            dtc_out = out_dir / "dtc_events.csv"
+            dtc_df.to_csv(dtc_out, index=False)
+            _set_progress(job_id, 84, f"DTC events: {len(dtc_df)} rows. Generating OTA events...")
         except Exception as exc:
             print(f"DTC generation skipped: {exc}")
+            _set_progress(job_id, 84, "DTC skipped. Generating OTA events...")
 
         try:
             from synthetic.generate_ota import generate_ota
-            generate_ota(fleet_df, out_dir, cfg.start_date, cfg.num_days)
-        except Exception:
-            pass
+            start_date_str = cfg.start_date if isinstance(cfg.start_date, str) else str(cfg.start_date)[:10]
+            generate_ota(fleet_df, out_dir, start_date_str, num_days)
+            _set_progress(job_id, 90, "OTA events done. Generating parts inventory...")
+        except Exception as exc:
+            print(f"OTA generation skipped: {exc}")
+            _set_progress(job_id, 90, "OTA skipped. Generating parts inventory...")
+
+        try:
+            from synthetic.generate_parts_inventory import generate_parts_inventory
+            start_date_str = cfg.start_date if isinstance(cfg.start_date, str) else str(cfg.start_date)[:10]
+            generate_parts_inventory(fleet_df, out_dir, start_date_str)
+            _set_progress(job_id, 96, "Parts inventory done.")
+        except Exception as exc:
+            print(f"Parts inventory generation skipped: {exc}")
 
         _set_progress(job_id, 100,
-                     f"Data generated: {num_vehicles} VINs, {num_days} days. Ready to train models.",
+                     f"Data generated: {num_vehicles} VINs, {num_days} days. "
+                     f"Telemetry, trips, service history, DTCs, OTA events, parts inventory ready.",
                      {"vehicles": num_vehicles, "days": num_days, "failure_rate": failure_rate,
                       "status": "success", "next_step": "train"})
 
@@ -182,7 +202,7 @@ async def generate_synthetic_data(
     _set_progress(job_id, 0, "Queued")
     background_tasks.add_task(
         _run_generation, job_id,
-        payload.num_vehicles, payload.num_days, payload.failure_rate,
+        payload.num_vehicles, payload.num_days, payload.failure_rate, payload.sessions_per_day,
     )
     return {
         "job_id":   job_id,

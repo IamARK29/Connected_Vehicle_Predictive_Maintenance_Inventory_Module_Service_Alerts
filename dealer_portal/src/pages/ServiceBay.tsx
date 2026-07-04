@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { useBayStatus, useAppointments, useCreateAppointment, useUpdateAppointmentStatus } from '../api/hooks'
+import { getMaintenanceCalendar } from '../api/client'
 import { BayGrid } from '../components/BayGrid'
-import type { AppointmentResponse } from '../types'
+import type { AppointmentResponse, MaintenanceEvent } from '../types'
 
 const DEALER_CODE = localStorage.getItem('ap_dealer_code') ?? 'DL001'
 
@@ -102,7 +105,7 @@ export default function ServiceBay() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Service Bay</h1>
-          <p className="text-gray-500 text-sm">Bay occupancy and appointment management — {DEALER_CODE}</p>
+          <p className="text-gray-500 text-sm">Bay occupancy and appointment management: {DEALER_CODE}</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
@@ -175,7 +178,63 @@ export default function ServiceBay() {
         </table>
       </div>
 
+      {/* Predicted service needs */}
+      <PredictedService daysAhead={daysAhead} />
+
       {showModal && <BookingModal onClose={() => setShowModal(false)} />}
+    </div>
+  )
+}
+
+function PredictedService({ daysAhead }: { daysAhead: number }) {
+  const { data: calRaw = [] } = useQuery({
+    queryKey: ['fleet', 'maintenance', daysAhead],
+    queryFn: () => getMaintenanceCalendar(daysAhead),
+  })
+  const calendar = (Array.isArray(calRaw) ? calRaw : []) as MaintenanceEvent[]
+
+  if (calendar.length === 0) return null
+
+  return (
+    <div className="card p-0 overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-200">
+        <h2 className="font-semibold text-gray-900">Predicted Service Needs</h2>
+        <p className="text-xs text-gray-500 mt-0.5">ML-predicted maintenance events in the next {daysAhead} days</p>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-b border-gray-200">
+          <tr>
+            {['Vehicle', 'Model', 'Service Type', 'Severity', 'Days Until', 'Confidence', ''].map(h => (
+              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {calendar.map((ev, i) => (
+            <tr key={i} className="hover:bg-blue-50 transition-colors">
+              <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{ev.vin?.slice(-8)}</td>
+              <td className="px-4 py-2.5 text-gray-700">{ev.model_name}</td>
+              <td className="px-4 py-2.5 capitalize">{ev.alert_type?.replace(/_/g, ' ')}</td>
+              <td className="px-4 py-2.5">
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  ev.severity === 'HIGH' ? 'bg-red-100 text-red-700' :
+                  ev.severity === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-gray-100 text-gray-600'
+                }`}>{ev.severity}</span>
+              </td>
+              <td className="px-4 py-2.5">
+                <span className={`font-bold text-xs ${ev.days_until <= 3 ? 'text-red-600' : ev.days_until <= 7 ? 'text-orange-600' : 'text-gray-600'}`}>
+                  {ev.days_until}d
+                </span>
+              </td>
+              <td className="px-4 py-2.5 text-xs text-gray-500">{Math.round((ev.confidence ?? 0) * 100)}%</td>
+              <td className="px-4 py-2.5">
+                <Link to={`/vehicles/${ev.vin}`} className="text-xs text-blue-600 hover:underline font-medium">View Vehicle</Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

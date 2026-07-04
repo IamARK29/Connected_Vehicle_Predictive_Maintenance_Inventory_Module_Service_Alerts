@@ -40,25 +40,63 @@ class HVBatteryFeaturePipeline(FeaturePipeline):
         d30   = self._last_days(df, 30)
         d90   = self._last_days(df, 90)
 
-        soc        = df["soc"].fillna(np.nan)         if "soc"           in df.columns else pd.Series(dtype=float)
-        soh        = df["soh"].fillna(np.nan)         if "soh"           in df.columns else pd.Series(dtype=float)
-        pack_vol   = df["bms_pack_vol"].fillna(np.nan) if "bms_pack_vol" in df.columns else pd.Series(dtype=float)
-        pack_crnt  = df["bms_pack_crnt"].fillna(np.nan) if "bms_pack_crnt" in df.columns else pd.Series(dtype=float)
-        cell_max_v = df["cell_max_vol"].fillna(np.nan) if "cell_max_vol"  in df.columns else pd.Series(dtype=float)
-        cell_min_v = df["cell_min_vol"].fillna(np.nan) if "cell_min_vol"  in df.columns else pd.Series(dtype=float)
-        cell_max_t = df["cell_max_temp"].fillna(np.nan) if "cell_max_temp" in df.columns else pd.Series(dtype=float)
-        cell_min_t = df["cell_min_temp"].fillna(np.nan) if "cell_min_temp" in df.columns else pd.Series(dtype=float)
+        soc        = df["soc"].fillna(np.nan)              if "soc"                   in df.columns else pd.Series(dtype=float)
+        # soh does NOT exist as a TBox signal — derived via Coulomb counting in pipeline
+        pack_vol   = df["bms_pack_vol"].fillna(np.nan)     if "bms_pack_vol"          in df.columns else pd.Series(dtype=float)
+        pack_crnt  = df["bms_pack_crnt"].fillna(np.nan)    if "bms_pack_crnt"         in df.columns else pd.Series(dtype=float)
+        cell_max_v = df["cell_max_vol"].fillna(np.nan)     if "cell_max_vol"          in df.columns else pd.Series(dtype=float)
+        cell_min_v = df["cell_min_vol"].fillna(np.nan)     if "cell_min_vol"          in df.columns else pd.Series(dtype=float)
+        cell_max_t = df["cell_max_temp"].fillna(np.nan)    if "cell_max_temp"         in df.columns else pd.Series(dtype=float)
+        cell_min_t = df["cell_min_temp"].fillna(np.nan)    if "cell_min_temp"         in df.columns else pd.Series(dtype=float)
+        # Real TBox thermal runaway and fault signals
+        bms_cmu_flt   = df["bms_cmu_fault"].fillna(0)          if "bms_cmu_fault"         in df.columns else pd.Series(0, index=df.index)
+        bms_cv_flt    = df["bms_cell_volt_fault"].fillna(0)     if "bms_cell_volt_fault"   in df.columns else pd.Series(0, index=df.index)
+        bms_pt_flt    = df["bms_pack_temp_fault"].fillna(0)     if "bms_pack_temp_fault"   in df.columns else pd.Series(0, index=df.index)
+        dcdc_temp     = df["dcdc_temp"].fillna(np.nan)          if "dcdc_temp"             in df.columns else pd.Series(dtype=float)
+        is_chg        = df["is_charging"].fillna(0)             if "is_charging"           in df.columns else pd.Series(0, index=df.index)
+        dc_or_ac      = df["dc_or_ac"]                          if "dc_or_ac"              in df.columns else pd.Series("", index=df.index)
+        used_since_chg = df["used_battery_since_charge"].fillna(np.nan) if "used_battery_since_charge" in df.columns else pd.Series(dtype=float)
 
-        # ── SoH estimation: try derived_utils Coulomb-counting first ─────
+        # ── SoH estimation — multi-factor physics model ───────────────────
+        # Primary: Coulomb counting from charge sessions; falls back to
+        # physics formula that uses age + odometer + cell spread + temperature.
         soh_from_session = None
         if battery_capacity_kwh and len(df) >= 60:
             soh_from_session = compute_soh_from_charge_session(df, battery_capacity_kwh)
-        soh_estimated = soh_from_session if soh_from_session is not None else \
-            _estimate_soh_from_cycles(soc, pack_vol, pack_crnt, battery_capacity_kwh)
+        soh_coulomb = _estimate_soh_from_cycles(soc, pack_vol, pack_crnt, battery_capacity_kwh)
 
-        # ── SoH trend over 90 days ────────────────────────────────────────
-        soh_90 = d90["soh"].fillna(np.nan) if "soh" in d90.columns else pd.Series(dtype=float)
-        soh_trend_slope_90d = self._slope(soh_90.resample("D", on=d90["timestamp"] if "timestamp" in d90.columns else None).mean() if False else soh_90)
+        # Multi-factor physics fallback (much richer than age-only)
+        vrow = _ctx.get("vrow", {})
+        mfr_year = int(getattr(vrow, "manufacture_year", None) or
+                       (vrow.get("manufacture_year", 2022) if hasattr(vrow, "get") else 2022))
+        age_years = float(t_max.year - mfr_year)
+        odo_km    = float(df["odometer"].iloc[-1]) if "odometer" in df.columns and len(df) > 0 else 0.0
+        # Cell voltage spread from raw data (available before spread_all computed below)
+        _cmx = df["cell_max_vol"].fillna(np.nan) if "cell_max_vol" in df.columns else pd.Series(dtype=float)
+        _cmn = df["cell_min_vol"].fillna(np.nan) if "cell_min_vol" in df.columns else pd.Series(dtype=float)
+        _spread_now = float((_cmx - _cmn).dropna().mean()) if len((_cmx - _cmn).dropna()) > 0 else 0.02
+        # High cell temperature events accelerate degradation
+        _cmax_t = df["cell_max_temp"].fillna(0) if "cell_max_temp" in df.columns else pd.Series(0.0, index=df.index)
+        _high_t_frac = float((_cmax_t > 45).mean())
+
+        cal_deg     = max(0.0, age_years - 1.0) * 2.5           # calendar: 2.5%/yr after yr-1
+        cyc_deg     = min(12.0, odo_km / 10_000.0 * 0.8)        # cycle: 0.8%/10K km, cap 12%
+        spread_deg  = max(0.0, (_spread_now - 0.02) / 0.40 * 15.0)  # spread: 0→15% over 0.02→0.42V
+        thermal_deg = min(5.0, _high_t_frac * 50.0)             # thermal: up to 5%
+        soh_physics = float(np.clip(100.0 - cal_deg - cyc_deg - spread_deg - thermal_deg, 60.0, 100.0))
+
+        # Pick best available estimate in priority order
+        for candidate in (soh_from_session, soh_coulomb, soh_physics):
+            if candidate is not None and not np.isnan(float(candidate)) and 60.0 <= float(candidate) <= 110.0:
+                soh_estimated: float = float(candidate)
+                break
+        else:
+            soh_estimated = soh_physics
+
+        # ── SoH trend: slope of rolling 30d SoH estimates across the 90d window ─
+        soh_trend_slope_90d = _compute_soh_trend_slope(
+            df, t_max, battery_capacity_kwh
+        )
 
         # ── Cell voltage spread ───────────────────────────────────────────
         spread_all = (cell_max_v - cell_min_v).dropna()
@@ -77,33 +115,87 @@ class HVBatteryFeaturePipeline(FeaturePipeline):
         # ── Charge session analysis ────────────────────────────────────────
         charge_stats = _analyse_charge_sessions(df, d30, battery_capacity_kwh)
 
-        # ── Thermal fault count (30d) ──────────────────────────────────────
-        thermal_fault_count_30d = 0
-        if "cell_max_temp" in d30.columns:
-            thermal_fault_count_30d = int((d30["cell_max_temp"].fillna(0) > 45).sum())
+        # ── Thermal fault count (30d) — from real TBox BMS fault signals ────
+        cmu_flt30  = d30["bms_cmu_fault"].fillna(0)        if "bms_cmu_fault"       in d30.columns else pd.Series(0, index=d30.index)
+        cv_flt30   = d30["bms_cell_volt_fault"].fillna(0)  if "bms_cell_volt_fault" in d30.columns else pd.Series(0, index=d30.index)
+        pt_flt30   = d30["bms_pack_temp_fault"].fillna(0)  if "bms_pack_temp_fault" in d30.columns else pd.Series(0, index=d30.index)
+        cell_max30 = d30["cell_max_temp"].fillna(0)        if "cell_max_temp"        in d30.columns else pd.Series(0, index=d30.index)
+
+        # BMS-reported fault events (any level > 0)
+        bms_cmu_fault_count_30d  = int((cmu_flt30  > 0).sum())
+        bms_cv_fault_count_30d   = int((cv_flt30   > 0).sum())
+        bms_pt_fault_count_30d   = int((pt_flt30   > 0).sum())
+        # Cell overtemp events as fallback thermal fault indicator
+        cell_overtemp_count_30d  = int((cell_max30 > 45).sum())
+        thermal_fault_count_30d  = max(bms_cmu_fault_count_30d + bms_cv_fault_count_30d + bms_pt_fault_count_30d,
+                                       cell_overtemp_count_30d)
+        # Maximum fault severity in last 30d (0=None, 1=L1, 2=L2, 3=L3)
+        max_fault_severity_30d   = max(int(cmu_flt30.max()), int(pt_flt30.max()), int(cv_flt30.max()))
+
+        # ── DCDC converter thermal stress ─────────────────────────────────
+        dcdc30              = d30["dcdc_temp"].fillna(np.nan) if "dcdc_temp" in d30.columns else pd.Series(dtype=float)
+        dcdc_temp_max_30d   = float(dcdc30.max()) if not dcdc30.dropna().empty else 0.0  # 0 = absent/nominal
+
+        # ── DC fast charge ratio (30d) ─────────────────────────────────────
+        dc_or_ac30          = d30["dc_or_ac"] if "dc_or_ac" in d30.columns else pd.Series("", index=d30.index)
+        is_chg30            = d30["is_charging"].fillna(0) if "is_charging" in d30.columns else pd.Series(0, index=d30.index)
+        chg_events          = is_chg30 > 0
+        dc_charge_sessions  = int(((dc_or_ac30 == "dc") & chg_events).sum())
+        total_chg_seconds   = int(chg_events.sum())
+        dc_charge_ratio_30d = float(dc_charge_sessions / max(total_chg_seconds, 1))
 
         # ── Isolation resistance min (30d) ─────────────────────────────────
-        # Not in synthetic data; placeholder
-        isolation_resistance_min_30d = 0.0
+        isolation_resistance_min_30d = 0.0  # not in TBox spec, placeholder
 
         # ── Range per kWh trend (30d) ─────────────────────────────────────
         range_per_kwh_30d_trend = _range_per_kwh_trend(d30, battery_capacity_kwh)
 
-        # ── Simple aggregate features expected by tests ─────────────────
+        # ── Simple aggregate features ─────────────────────────────────────
         soc7        = d7["soc"].fillna(np.nan) if "soc" in d7.columns else pd.Series(dtype=float)
         soc_mean_7d = float(soc7.mean())       if not soc7.dropna().empty else (float(soc.mean()) if not soc.dropna().empty else 0.0)
-        soh_mean    = float(soh.dropna().mean()) if not soh.dropna().empty else (soh_estimated if soh_estimated is not None and not np.isnan(soh_estimated) else 0.0)
+        # SOH is derived; use Coulomb-counting estimate as the canonical value
+        soh_mean    = soh_estimated if soh_estimated is not None and not np.isnan(soh_estimated) else 0.0
 
         # ── Current state ─────────────────────────────────────────────────
-        soc_current = float(soc.iloc[-1]) if len(soc) > 0 else np.nan
-        soh_current = float(soh.iloc[-1]) if len(soh) > 0 else np.nan
+        soc_current = float(soc.iloc[-1])      if len(soc) > 0       else np.nan
+        soh_current = soh_estimated             # best available estimate
 
-        # ── Labels ────────────────────────────────────────────────────────
-        days_to_failure, within_90 = self._label_days_to_failure(
+        # ── Labels — SOH trend-based self-supervision ─────────────────────
+        # Physics: extrapolate SOH trend to 80% threshold.
+        # soh_trend_slope_90d is in %/day (negative = degrading).
+        _SOH_WARN_THRESHOLD = 85.0   # warn before hitting 80%
+        # Age-based degradation: compute from vrow regardless of SOH path taken
+        _vrow = _ctx.get("vrow", {})
+        _mfr_year = int(getattr(_vrow, "manufacture_year", None) or
+                        (_vrow.get("manufacture_year", 2022) if hasattr(_vrow, "get") else 2022))
+        _age_years = float(t_max.year - _mfr_year)
+        if not np.isnan(soh_estimated):
+            if soh_trend_slope_90d < -0.001:
+                # Days until SOH drops to 80% at current slope
+                days_to_physics = float(np.clip(
+                    (soh_estimated - 80.0) / abs(soh_trend_slope_90d), 0, 3650
+                ))
+            else:
+                days_to_physics = 3650.0  # stable, very far future
+            # Positive label: trend extrapolation reaches <80% within 90d,
+            # OR SoH already below the warn threshold and actively degrading.
+            # Age alone is NOT sufficient — avoids labelling the whole fleet positive.
+            within_physics = int(
+                (soh_estimated < _SOH_WARN_THRESHOLD and soh_trend_slope_90d < -0.005) or
+                (not np.isnan(days_to_physics) and days_to_physics < 90)
+            )
+        else:
+            days_to_physics = np.nan
+            within_physics  = 0
+
+        days_to_failure, within_svc = self._label_days_to_failure(
             vin, label_df, "hv_battery_degradation", t_max
         )
+        if np.isnan(days_to_failure):
+            days_to_failure = days_to_physics
         soh_below_80_within_90 = int(
-            within_90 or (not np.isnan(soh_current) and soh_current < 80)
+            within_svc or within_physics or
+            (not np.isnan(soh_current) and soh_current < 80)
         )
 
         # ── OTA features ──────────────────────────────────────────────────
@@ -127,6 +219,7 @@ class HVBatteryFeaturePipeline(FeaturePipeline):
 
         return self._row(vin, t_max, {
             "hv_applicable":                    1,
+            "fuel_type":                        fuel_type,
             "soc_mean_7d":                      soc_mean_7d,
             "soh_mean":                         soh_mean,
             "soh_estimated":                    soh_estimated,
@@ -139,6 +232,13 @@ class HVBatteryFeaturePipeline(FeaturePipeline):
             "charge_duration_deviation":        charge_stats["duration_deviation"],
             "avg_charge_c_rate_30d":            charge_stats["avg_c_rate"],
             "thermal_fault_count_30d":          thermal_fault_count_30d,
+            # Real TBox BMS fault signals
+            "bms_cmu_fault_count_30d":          bms_cmu_fault_count_30d,
+            "bms_cv_fault_count_30d":           bms_cv_fault_count_30d,
+            "bms_pt_fault_count_30d":           bms_pt_fault_count_30d,
+            "max_fault_severity_30d":           max_fault_severity_30d,
+            "dcdc_temp_max_30d":                dcdc_temp_max_30d,
+            "dc_charge_ratio_30d":              dc_charge_ratio_30d,
             "isolation_resistance_min_30d":     isolation_resistance_min_30d,
             "range_per_kwh_30d_trend":          range_per_kwh_30d_trend,
             "soc_current":                      soc_current,
@@ -156,6 +256,60 @@ class HVBatteryFeaturePipeline(FeaturePipeline):
             "days_to_hv_failure":               days_to_failure,
             "soh_below_80_within_90_days":      soh_below_80_within_90,
         })
+
+
+# ── SoH trend helpers ─────────────────────────────────────────────────────
+
+def _compute_soh_trend_slope(
+    df: pd.DataFrame,
+    t_max: pd.Timestamp,
+    battery_capacity_kwh: float | None,
+) -> float:
+    """
+    Estimate SoH degradation rate in %/day using cell voltage spread slope
+    across the 90-day window — more reliable than Coulomb counting when
+    charging sessions are sparse.  Negative = degrading.
+    """
+    if "timestamp" not in df.columns or "cell_max_vol" not in df.columns or "cell_min_vol" not in df.columns:
+        return -2.5 / 365.0
+
+    soh_points: list[tuple[float, float]] = []
+
+    for days_ago in (90, 60, 30, 0):
+        t_end   = t_max - pd.Timedelta(days=days_ago)
+        t_start = t_end  - pd.Timedelta(days=30)
+        seg = df[(df["timestamp"] >= t_start) & (df["timestamp"] <= t_end)]
+        if len(seg) < 20:
+            continue
+
+        # Cell voltage spread as SoH proxy: higher spread → lower SoH
+        cmx = seg["cell_max_vol"].fillna(np.nan)
+        cmn = seg["cell_min_vol"].fillna(np.nan)
+        spread = float((cmx - cmn).dropna().mean()) if len((cmx - cmn).dropna()) > 0 else np.nan
+        if np.isnan(spread):
+            continue
+
+        # Also try Coulomb counting if current data available
+        soc_s  = seg["soc"].fillna(np.nan)  if "soc"          in seg.columns else pd.Series(dtype=float)
+        vol_s  = seg["bms_pack_vol"].fillna(np.nan) if "bms_pack_vol" in seg.columns else pd.Series(dtype=float)
+        crnt_s = seg["bms_pack_crnt"].fillna(np.nan) if "bms_pack_crnt" in seg.columns else pd.Series(dtype=float)
+        soh_cc = _estimate_soh_from_cycles(soc_s, vol_s, crnt_s, battery_capacity_kwh)
+
+        if soh_cc is not None and not np.isnan(float(soh_cc)) and 60 <= float(soh_cc) <= 110:
+            soh_val = float(soh_cc)
+        else:
+            # Physics estimate from spread: 0.02V = ~100%, 0.42V = ~85%
+            soh_val = float(np.clip(100.0 - max(0.0, (spread - 0.02) / 0.40 * 15.0), 60.0, 100.0))
+
+        soh_points.append((-float(days_ago), soh_val))
+
+    if len(soh_points) >= 2:
+        x = np.array([p[0] for p in soh_points])
+        y = np.array([p[1] for p in soh_points])
+        if np.std(x) > 0 and np.std(y) > 1e-6:
+            return float(np.polyfit(x, y, 1)[0])
+
+    return -2.5 / 365.0
 
 
 # ── Charge cycle helpers ───────────────────────────────────────────────────
@@ -242,7 +396,7 @@ def _analyse_charge_sessions(
                 out["dc_count"] += 1
         durations.append(len(seg_crnt) / 60)  # minutes
 
-    out["avg_c_rate"] = float(np.mean(c_rates)) if c_rates else np.nan
+    out["avg_c_rate"] = float(np.mean(c_rates)) if c_rates else 0.0
 
     # Duration deviation: actual vs expected (4h for 70% delta at 0.25C)
     if durations:

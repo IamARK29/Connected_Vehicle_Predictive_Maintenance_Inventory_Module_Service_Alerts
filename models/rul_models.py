@@ -31,37 +31,44 @@ RUL_MODEL_SPECS: dict[str, dict] = {
     "brake_wear_rul": {
         "class": "WeibullRULModel",
         "covariates": [
-            "harsh_brake_rate_30d",
-            "km_since_last_brake_service",
-            "brake_thermal_stress",
-            "regen_fraction",
+            "harsh_brake_rate_30d",           # events per 100km (derived from vehBrakePos + tboxAccelX)
+            "km_since_last_brake_service",     # from service history DMS
+            "brake_thermal_stress",            # (vehBrakePos × vehSpeed²) cumulative
+            "abs_activation_rate_30d",         # from real vehABSF signal
+            "downhill_brake_stress",           # from tboxAccelZ × vehBrakePos
+            "regen_fraction",                  # EV-only, 0 for ICE
         ],
     },
     "engine_oil_rul": {
         "class": "CoxPHRULModel",
         "covariates": [
-            "km_since_oil_change",
-            "cold_start_count_30d",
-            "high_rpm_stress_index",
-            "oil_degradation_index",
+            "km_since_oil_change",             # from service history DMS
+            "cold_start_count_30d",            # vehSysPwrMod transition at vehCoolantTemp < 40°C
+            "high_rpm_stress_index",           # derived from vehRPM
+            "oil_degradation_index",           # physics formula from coolant/rpm/km
+            "oil_pressure_warning_active",     # real binary from vehOilPressureWarning
+            "mil_warning_active",              # real binary from vehMILWarning
         ],
     },
     "battery_12v_rul": {
         "class": "CoxPHRULModel",
         "covariates": [
-            "resting_voltage_trend_14d",
-            "battery_12v_health_score",
-            "cranking_voltage_dip_avg",
-            "battery_age_years",
+            "resting_voltage_trend_14d",       # slope of resting vehBatt during park
+            "battery_12v_health_score",        # composite: voltage + trend + crank + age
+            "cranking_voltage_dip_avg",        # min vehBatt at vehSysPwrMod=3 (Crank)
+            "battery_age_years",               # from manufacture_year
+            "light_on_engine_off_events_7d",   # from real vehDipLight/vehMainLight signals
         ],
     },
     "tyre_wear_rul": {
         "class": "WeibullRULModel",
         "covariates": [
-            "tyre_stress_cumulative",
-            "km_since_last_tyre_service",
-            "axle_imbalance_front",
-            "pressure_drop_rate_fl",
+            "tyre_stress_cumulative",          # harsh brakes + cornering + speed stress
+            "km_since_last_tyre_service",      # from service history DMS
+            "axle_imbalance_front",            # abs(frontLeft − frontRight pressure)
+            "pressure_drop_rate_fl",           # kPa/day trend on front-left corner
+            "tpms_deflation_count",            # wheelTyreMonitorStatus == 1 events
+            "lateral_g_95th_30d",             # from real tboxAccelY signal
         ],
     },
 }
@@ -232,7 +239,7 @@ class CoxPHRULModel:
     Advantages: no distributional assumption; handles time-varying hazard.
     """
 
-    def __init__(self, penalizer: float = 0.1) -> None:
+    def __init__(self, penalizer: float = 2.0) -> None:
         self._penalizer = penalizer
         self._model     = None
         self._covariates: list[str] = []
@@ -247,6 +254,7 @@ class CoxPHRULModel:
     ) -> "CoxPHRULModel":
         try:
             from lifelines import CoxPHFitter
+            import pandas as pd
 
             self._covariates = [c for c in covariate_cols if c in df.columns]
             cols   = [duration_col, event_col] + self._covariates
@@ -254,10 +262,29 @@ class CoxPHRULModel:
             if len(fit_df) < 10:
                 log.warning("CoxPH: only %d rows — model may be unreliable", len(fit_df))
 
-            self._model = CoxPHFitter(penalizer=self._penalizer)
-            self._model.fit(fit_df, duration_col=duration_col, event_col=event_col)
-            self._fitted = True
-            log.info("CoxPH fitted on %d rows, covariates: %s", len(fit_df), self._covariates)
+            # Drop near-zero-variance columns to avoid singular matrix
+            cov_cols = [c for c in self._covariates if fit_df[c].std() > 1e-6]
+            if len(cov_cols) < len(self._covariates):
+                dropped = set(self._covariates) - set(cov_cols)
+                log.warning("CoxPH: dropping zero-variance covariates: %s", dropped)
+                self._covariates = cov_cols
+                fit_df = fit_df[[duration_col, event_col] + cov_cols]
+
+            # Retry with progressively higher penalizer if matrix is singular
+            for pen in (self._penalizer, 5.0, 10.0, 50.0):
+                try:
+                    model = CoxPHFitter(penalizer=pen)
+                    model.fit(fit_df, duration_col=duration_col, event_col=event_col)
+                    self._model   = model
+                    self._fitted  = True
+                    self._penalizer = pen
+                    log.info("CoxPH fitted on %d rows (penalizer=%.1f), covariates: %s",
+                             len(fit_df), pen, self._covariates)
+                    break
+                except Exception as inner:
+                    log.warning("CoxPH penalizer=%.1f failed: %s — retrying with higher", pen, inner)
+            else:
+                log.error("CoxPH failed at all penalizer levels — model not fitted")
         except Exception as exc:
             log.error("CoxPH training failed: %s", exc)
         return self

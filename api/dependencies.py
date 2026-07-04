@@ -52,7 +52,7 @@ def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depend
         user_id: str = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        return {"user_id": user_id, "role": payload.get("role", "dealer")}
+        return {"user_id": user_id, "role": payload.get("role", "dealer"), "dealer_code": payload.get("dealer_code", "ALL")}
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 

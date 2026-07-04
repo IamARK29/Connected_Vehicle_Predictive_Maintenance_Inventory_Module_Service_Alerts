@@ -24,7 +24,8 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+_default_mlflow = Path("mlruns").resolve().as_uri()
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", _default_mlflow)
 MODEL_DIR  = Path("models/saved")
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -88,7 +89,8 @@ def _optuna_xgb(
                 if len(te) == 0:
                     continue
                 if task == "clf":
-                    m = xgb.XGBClassifier(**params, use_label_encoder=False, eval_metric="logloss")
+                    bs = float(np.clip(y[tr].mean(), 0.01, 0.99))
+                    m = xgb.XGBClassifier(**params, use_label_encoder=False, eval_metric="logloss", base_score=bs)
                     m.fit(X[tr], y[tr])
                     if y[te].sum() == 0:
                         continue

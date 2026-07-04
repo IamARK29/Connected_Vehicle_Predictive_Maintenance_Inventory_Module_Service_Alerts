@@ -75,19 +75,28 @@ class EdgeCaseGenerator:
     def _mode_out_of_order_timestamps(self, df, rng, np_rng):
         if "timestamp" not in df.columns:
             return df
+        df = df.copy()
+        ts = df["timestamp"]
+        if pd.api.types.is_numeric_dtype(ts):
+            df["timestamp"] = pd.to_datetime(ts, unit="s", utc=True)
+        else:
+            df["timestamp"] = pd.to_datetime(ts, utc=True)
         n_shift = max(1, int(len(df) * 0.03))
         idx     = np_rng.choice(df.index, size=n_shift, replace=False)
         shifts  = [timedelta(seconds=int(s)) for s in np_rng.integers(-30, 30, size=n_shift)]
-        df = df.copy()
         for i, delta in zip(idx, shifts):
-            df.at[i, "timestamp"] = pd.to_datetime(df.at[i, "timestamp"]) + delta
+            df.at[i, "timestamp"] = df.at[i, "timestamp"] + delta
         return df
 
     def _mode_missing_intervals(self, df, rng, np_rng):
         if "timestamp" not in df.columns:
             return df
         df = df.copy()
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        ts = df["timestamp"]
+        if pd.api.types.is_numeric_dtype(ts):
+            df["timestamp"] = pd.to_datetime(ts, unit="s", utc=True)
+        else:
+            df["timestamp"] = pd.to_datetime(ts, utc=True)
         df = df.sort_values("timestamp").reset_index(drop=True)
         if len(df) < 100:
             return df
@@ -103,6 +112,13 @@ class EdgeCaseGenerator:
             gap_end     = gap_start + timedelta(minutes=15)
             gap_mask    = (df["timestamp"] >= gap_start) & (df["timestamp"] < gap_end)
             mask &= ~gap_mask
+
+        # For sparse data (1 row per hour+), timestamp gaps may hit zero rows.
+        # Guarantee at least 5% removal by random drop as fallback.
+        if mask.all():
+            drop_n = max(1, len(df) // 20)
+            drop_idx = np_rng.choice(df.index, size=drop_n, replace=False)
+            mask.iloc[drop_idx] = False
 
         return df[mask].reset_index(drop=True)
 

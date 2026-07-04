@@ -93,7 +93,7 @@ def _queue_task(filepath: Path, data_type: str) -> str:
 # ── CSV templates ──────────────────────────────────────────────────────────
 
 _TEMPLATES: dict[str, str] = {
-    "telemetry": "StartTime-TimeStamp,VIN,VehSpeed,VehRPM,VehSysPwrMod,VehBatt,VehOdo,VehFuelLev,VehCoolantTemp,VehOutsideTemp,VehAccelPos,VehBrakePos,BMSPackSOC,BMSPackSOH,TyrePressureFL,TyrePressureFR,TyrePressureRL,TyrePressureRR,GNSSLat,GNSSLong\n",
+    "telemetry": "StartTime-TimeStamp,VIN,vehSpeed,vehSysPwrMod,vehGearPos,tboxAccelX,tboxAccelY,tboxAccelZ,vehBatt,vehOdo,vehCoolantTemp,vehOutsideTemp,vehAC,vehBrkFludLvlLow,vehABSF,vehOilPressureWarning,vehMILWarning,frontLeftTyrePressure,frontRrightTyrePressure,rearLeftTyrePressure,rearRightTyrePressure,wheelTyreMonitorStatus,gnssLat,gnssLong,vehRPM,FuelTankLevel,vehBMSPackSOC,vehBMSPackVol,vehBMSPackCrnt,vehBMSCellMaxTem,vehBMSCMUFlt,vehBMSPackTemFlt\n",
     "trips": "tripId,vin,startTime,endTime,startOdometer,endOdometer,odometer,averageSpeed,maxSpeed,vehFuelConsumed,fuelEfficiency,driveScore,harshBreakingNum,suddenTurnNum,accelerationNum,startPoint_lat,startPoint_long,endPoint_lat,endPoint_long\n",
     "service": "VIN,CreatedOn,ServiceType,DealerCode,DealerName,ModelSalesCode,DescriptionOne,OrderQuantity,NetValue,Mileage\n",
 }

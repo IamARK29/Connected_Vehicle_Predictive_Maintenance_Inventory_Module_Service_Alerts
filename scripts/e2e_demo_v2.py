@@ -252,11 +252,14 @@ def step08():
     ml_engine = MLAlertEngine()
 
     test_data = {
-        "brake_pad_front_mm": 2.0,
-        "brake_fluid_pct": 70,
-        "battery_12v_v": 11.5,
-        "coolant_temp_c": 105,
-        "tyre_pressure_fl_kpa": 180,
+        # Real TBox binary signals + derived pipeline outputs
+        "vehBrkFludLvlLow":             True,     # brake fluid low warning
+        "vehOilPressureWarning":        False,
+        "VehBatt":                      11.5,     # 12V battery
+        "VehCoolantTemp":               105,
+        "wheelTyreMonitorStatus":       1,        # TPMS alert
+        "km_since_last_brake_service":  30_000,   # from DMS service history
+        "km_since_oil_change":          7_000,    # from DMS service history
     }
     rule_alerts = rule_engine.evaluate("TESTVIN", test_data)
 

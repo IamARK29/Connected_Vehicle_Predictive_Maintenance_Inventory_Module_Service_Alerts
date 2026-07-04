@@ -32,11 +32,13 @@ FEATURE_COLS = [
     "parasitic_drain_rate_7d",
     "battery_age_days",
     "total_km_proxy",
-    "lights_on_engine_off_count_7d",
+    # Real aux load signals from TBox spec
+    "light_on_engine_off_events_7d",  # from vehDipLight + vehMainLight when off
+    "ac_acc_drain_minutes_7d",        # from vehAC when SysPwrMod=ACC
     "avg_outside_temp_7d",
     "voltage_current",
 ]
-TARGET_CLF = "no_start_within_7_days"
+TARGET_CLF = "battery_12v_within_30_days"
 
 _lr:     Any = None
 _xgb:    Any = None
@@ -72,13 +74,18 @@ def train(features_df: pd.DataFrame, experiment: str = "autopredict-v1") -> dict
     X      = scaler.fit_transform(df_clf[avail].fillna(0))
     y      = df_clf[TARGET_CLF].values.astype(int)
 
+    if y.sum() == 0:
+        log.warning("battery_12v: y_clf all-zeros — skipping classifier")
+        return {"skipped": True, "reason": "no positive classifier labels"}
+
     # ── Logistic Regression (interpretable) ───────────────────────────────
     lr = LogisticRegression(C=0.5, max_iter=1000, class_weight="balanced", random_state=42)
     lr.fit(X, y)
 
     # ── XGBoost ───────────────────────────────────────────────────────────
     best = _optuna_xgb(X, y, task="clf", n_trials=30)
-    clf_params = {**best, "use_label_encoder": False, "eval_metric": "logloss"}
+    clf_params = {**best, "use_label_encoder": False, "eval_metric": "logloss",
+                  "base_score": float(np.clip(y.mean(), 0.01, 0.99))}
     xgb_clf = xgb.XGBClassifier(**clf_params)
     xgb_clf.fit(X, y)
 
@@ -135,7 +142,7 @@ def predict_single(vin: str) -> dict:
     from features.battery_12v_features import Battery12VFeaturePipeline
     feats = Battery12VFeaturePipeline().compute_from_influx(vin, lookback_days=30)
     if feats is None or feats.empty:
-        return {"error": f"No 12V battery data for VIN {vin}"}
+        return {"severity": "unknown", "error": f"No 12V battery data for VIN {vin}"}
     return predict_batch(feats).iloc[0].to_dict()
 
 

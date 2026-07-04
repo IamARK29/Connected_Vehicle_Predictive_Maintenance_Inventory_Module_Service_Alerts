@@ -37,7 +37,6 @@ class EngineFeaturePipeline(FeaturePipeline):
         rpm         = df["rpm"].fillna(0)         if "rpm"         in df.columns else pd.Series(0.0, index=df.index)
         sys_pwr     = df["sys_pwr_mod"].fillna(0) if "sys_pwr_mod" in df.columns else pd.Series(0, index=df.index)
         coolant     = df["coolant_temp"].fillna(np.nan) if "coolant_temp" in df.columns else pd.Series(dtype=float)
-        oil_life    = df["oil_life_pct"].fillna(np.nan) if "oil_life_pct" in df.columns else pd.Series(dtype=float)
         fuel_con    = df["fuel_consumed"].fillna(0) if "fuel_consumed" in df.columns else pd.Series(0.0, index=df.index)
         odo         = df["odometer"]             if "odometer"    in df.columns else pd.Series(dtype=float)
 
@@ -48,7 +47,8 @@ class EngineFeaturePipeline(FeaturePipeline):
         # ── km / days since last oil change ──────────────────────────────
         km_since_oil_change = float(odo.iloc[-1] - last_oil_change_odo) if (
             last_oil_change_odo is not None and len(odo) > 0
-        ) else 0.0
+        ) else (float(odo.iloc[-1]) % 7_500.0 if len(odo) > 0 else 0.0)
+        # When unknown, modulo 7500 simulates position in current oil-change lifecycle
 
         days_since_oil_change = 0.0
         if last_oil_change_date:
@@ -125,7 +125,7 @@ class EngineFeaturePipeline(FeaturePipeline):
         short_trip_fraction_30d = 0.0
         if "sys_pwr_mod" in d30.columns and "odometer" in d30.columns:
             pwr30 = d30["sys_pwr_mod"].fillna(0)
-            odo30 = d30["odometer"].fillna(method=None)
+            odo30 = d30["odometer"].ffill()
             session_end_mask = (pwr30.diff(-1) < 0).fillna(False)
             session_start_mask = (pwr30.diff() > 1).fillna(False)
             starts = odo30[session_start_mask].values
@@ -140,17 +140,31 @@ class EngineFeaturePipeline(FeaturePipeline):
         oil_degradation_index = compute_oil_degradation_index(df, _empty_svc) / 100.0
 
         # ── Current state ─────────────────────────────────────────────────
-        oil_life_pct_now    = float(oil_life.iloc[-1]) if len(oil_life) > 0 else np.nan
-        oil_pressure_warn   = 0   # field not in synthetic data
-        mil_warning         = 0
+        # oil_life_pct does not exist as a TBox signal; derived from service history
+        oil_life_pct_now    = np.nan
+        # Real binary warning signals from TBox spec
+        oil_pressure_warn   = int(df["oil_pressure_warning"].any()) if "oil_pressure_warning" in df.columns else 0
+        mil_warning         = int(df["mil_warning"].any())          if "mil_warning"          in df.columns else 0
 
-        # ── Labels ────────────────────────────────────────────────────────
-        days_to_failure, within_14 = self._label_days_to_failure(
+        # ── Labels — physics-based self-supervision + optional service event ──
+        # Physics: ODI hits 1.0 = change required. Extrapolate to 0.9 threshold.
+        # When last_oil_change_date is unknown, use 90d as the denominator so that
+        # odi_rate = ODI/90 (not ODI/1), avoiding falsely labelling every row within_30.
+        _TYPICAL_OIL_INTERVAL = 90.0
+        effective_days = days_since_oil_change if days_since_oil_change > 7 else _TYPICAL_OIL_INTERVAL
+        odi_rate = max(oil_degradation_index / max(effective_days, 1), 1e-4)
+        days_to_physics = float(np.clip((0.90 - oil_degradation_index) / odi_rate, 0, 365))
+        # km_since >= 6000 within a 7500-km interval signals imminent oil change
+        within_physics  = int(oil_degradation_index >= 0.60 or km_since_oil_change >= 6_000 or days_to_physics <= 30)
+
+        days_to_failure, within_svc = self._label_days_to_failure(
             vin, label_df, "oil_degradation", t_max
         )
-        oil_change_due_within_14 = int(
-            (not np.isnan(oil_life_pct_now) and oil_life_pct_now < 15) or within_14
-        )
+        # Prefer service-event label if it exists; fall back to physics
+        if np.isnan(days_to_failure):
+            days_to_failure = days_to_physics
+        within_14 = int(within_svc or within_physics)
+        oil_change_due_within_14 = within_14
 
         # ── Simple aggregate features expected by tests ────────────────────
         rpm7       = d7["rpm"].fillna(0) if "rpm" in d7.columns else pd.Series(dtype=float)

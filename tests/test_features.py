@@ -35,6 +35,14 @@ _ALLOWED_NAN = {
     "hv_within_30_days",
     "days_to_tyre_replacement",
     "tyre_within_30_days",
+    # Real TBox has no pad-mm or fluid-% signals — these are placeholder NaN outputs
+    "brake_front_mm",
+    "brake_rear_mm",
+    "brake_fluid_pct",
+    # oil_life_pct is not a TBox signal; always NaN — derived from service history only
+    "oil_life_pct",
+    # SOH is pipeline-estimated via Coulomb counting, not a raw TBox output
+    "soh_estimated",
 }
 
 

@@ -32,26 +32,30 @@ def engine() -> RuleEngine:
 def _state(**kwargs) -> dict:
     """Build a minimal safe-state dict and override with kwargs."""
     base = {
-        "VehSpeed":             60,
-        "VehBatt":              12.6,
-        "vehBMSPackTemFlt":     0,
-        "vehBMSCMUFlt":         0,
-        "vehBrkFludLvlLow":     False,
-        "vehOilPressureWarning": False,
-        "wheelTyreMonitorStatus": 0,
-        "VehCoolantTemp":       90,
-        "EnginOilLifePct":      80,
-        "BrakePadFrontMM":      8.0,
-        "BrakePadRearMM":       8.0,
-        "BrakeFluidPct":        95,
-        "BMSPackSOC":           50,
-        "BMSPackSOH":           90,
-        "BMSCellMaxTemp":       30,
-        "BMSCellMaxVol":        3.7,
-        "BMSCellMinVol":        3.7,
-        "FuelTankLevel":        50,
-        "VehSysPwrMod":         "ON",
-        "off_duration_minutes": 0,
+        "VehSpeed":                      60,
+        "VehBatt":                       12.6,
+        "vehBMSPackTemFlt":              0,
+        "vehBMSCMUFlt":                  0,
+        "vehBrkFludLvlLow":              False,
+        "vehOilPressureWarning":         False,
+        "wheelTyreMonitorStatus":        0,
+        "VehCoolantTemp":                90,
+        # Service-history-derived pipeline outputs (no fake TBox signals)
+        "km_since_last_brake_service":   5_000,   # well below 28k warning threshold
+        "brake_replacement_within_7_days":  False,
+        "brake_replacement_within_30_days": False,
+        "km_since_oil_change":           2_000,   # well below 6.5k threshold
+        "oil_change_due_within_14":      False,
+        "oil_degradation_index":         0.20,    # below 0.55 advisory threshold
+        # BMS / EV — real TBox names (vehBMSCellMaxTem uses "Tem" not "Temp")
+        "BMSPackSOC":                    50,
+        "soh_estimated":                 90,
+        "vehBMSCellMaxTem":              30,
+        "vehBMSCellMaxVol":              3.7,
+        "vehBMSCellMinVol":              3.7,
+        "FuelTankLevel":                 50,
+        "VehSysPwrMod":                  "ON",
+        "off_duration_minutes":          0,
     }
     base.update(kwargs)
     return base
@@ -98,13 +102,14 @@ def test_low_brake_fluid_flag(engine):
     assert a.severity == "CRITICAL"
 
 
-def test_low_brake_fluid_pct(engine):
-    alerts = engine.evaluate(VIN, _state(BrakeFluidPct=5))
+def test_low_brake_fluid_binary_only(engine):
+    # vehBrkFludLvlLow=True is the only real TBox brake fluid signal
+    alerts = engine.evaluate(VIN, _state(vehBrkFludLvlLow=True))
     assert _has(alerts, "LOW_BRAKE_FLUID") is not None
 
 
-def test_no_low_brake_fluid_at_threshold(engine):
-    alerts = engine.evaluate(VIN, _state(BrakeFluidPct=10, vehBrkFludLvlLow=False))
+def test_no_low_brake_fluid_when_ok(engine):
+    alerts = engine.evaluate(VIN, _state(vehBrkFludLvlLow=False))
     assert _has(alerts, "LOW_BRAKE_FLUID") is None
 
 
@@ -148,21 +153,26 @@ def test_engine_overtemp_exact_boundary(engine):
 
 # ── CRITICAL: Brake Pads Worn ─────────────────────────────────────────────────
 
-def test_brake_pad_critical_front(engine):
-    alerts = engine.evaluate(VIN, _state(BrakePadFrontMM=1.5, BrakePadRearMM=8.0))
+def test_brake_pad_critical_ml_flag(engine):
+    # ML model flags urgent replacement within 7 days
+    alerts = engine.evaluate(VIN, _state(brake_replacement_within_7_days=True))
     a = _has(alerts, "BRAKE_PAD_CRITICAL")
     assert a is not None
     assert a.severity == "CRITICAL"
 
 
-def test_brake_pad_critical_rear(engine):
-    alerts = engine.evaluate(VIN, _state(BrakePadFrontMM=8.0, BrakePadRearMM=1.9))
+def test_brake_pad_critical_km_threshold(engine):
+    # >35,000 km since last brake service → critical wear
+    alerts = engine.evaluate(VIN, _state(km_since_last_brake_service=36_000))
     assert _has(alerts, "BRAKE_PAD_CRITICAL") is not None
 
 
-def test_brake_pad_no_critical_at_2mm(engine):
-    # exactly 2mm → MEDIUM not CRITICAL
-    alerts = engine.evaluate(VIN, _state(BrakePadFrontMM=2.0, BrakePadRearMM=8.0))
+def test_brake_pad_no_critical_below_threshold(engine):
+    # 30k km → MEDIUM warning but not CRITICAL
+    alerts = engine.evaluate(VIN, _state(
+        km_since_last_brake_service=30_000,
+        brake_replacement_within_7_days=False,
+    ))
     assert _has(alerts, "BRAKE_PAD_CRITICAL") is None
 
 
@@ -197,21 +207,23 @@ def test_bms_pack_temp_warning_high(engine):
 
 
 def test_hv_soh_critical_high(engine):
-    alerts = engine.evaluate(VIN, _state(BMSPackSOH=65))
+    # soh_estimated from feature pipeline Coulomb-counting (no raw TBox SOH signal)
+    alerts = engine.evaluate(VIN, _state(soh_estimated=65))
     a = _has(alerts, "HV_BATTERY_SOH_CRITICAL")
     assert a is not None
     assert a.severity == "HIGH"
 
 
 def test_cell_overtemp_high(engine):
-    alerts = engine.evaluate(VIN, _state(BMSCellMaxTemp=50))
+    # vehBMSCellMaxTem is the real TBox name ("Tem" not "Temp")
+    alerts = engine.evaluate(VIN, _state(vehBMSCellMaxTem=50))
     a = _has(alerts, "CELL_OVERTEMP")
     assert a is not None
     assert a.severity == "HIGH"
 
 
 def test_cell_voltage_imbalance_high(engine):
-    alerts = engine.evaluate(VIN, _state(BMSCellMaxVol=3.9, BMSCellMinVol=3.7))
+    alerts = engine.evaluate(VIN, _state(vehBMSCellMaxVol=3.9, vehBMSCellMinVol=3.7))
     a = _has(alerts, "CELL_VOLTAGE_IMBALANCE")
     assert a is not None
     assert a.severity == "HIGH"
@@ -220,14 +232,17 @@ def test_cell_voltage_imbalance_high(engine):
 # ── MEDIUM rules ──────────────────────────────────────────────────────────────
 
 def test_brake_pad_medium_warning(engine):
-    alerts = engine.evaluate(VIN, _state(BrakePadFrontMM=3.0, BrakePadRearMM=8.0))
+    alerts = engine.evaluate(VIN, _state(
+        km_since_last_brake_service=30_000,
+        brake_replacement_within_7_days=False,
+    ))
     a = _has(alerts, "BRAKE_PAD_WARNING")
     assert a is not None
     assert a.severity == "MEDIUM"
 
 
 def test_engine_oil_low_medium(engine):
-    alerts = engine.evaluate(VIN, _state(EnginOilLifePct=15))
+    alerts = engine.evaluate(VIN, _state(oil_change_due_within_14=True))
     a = _has(alerts, "ENGINE_OIL_LOW")
     assert a is not None
     assert a.severity == "MEDIUM"
@@ -250,7 +265,7 @@ def test_hv_soc_low_medium(engine):
 # ── LOW rules ─────────────────────────────────────────────────────────────────
 
 def test_engine_oil_advisory_low(engine):
-    alerts = engine.evaluate(VIN, _state(EnginOilLifePct=25))
+    alerts = engine.evaluate(VIN, _state(oil_degradation_index=0.62))
     a = _has(alerts, "ENGINE_OIL_ADVISORY")
     assert a is not None
     assert a.severity == "LOW"
@@ -316,11 +331,11 @@ def test_alert_severity_valid_enum(engine):
     # Throw a lot of different states and check all severities are valid
     states = [
         _state(vehBMSPackTemFlt=3),
-        _state(BrakePadFrontMM=1.0),
+        _state(brake_replacement_within_7_days=True),
         _state(VehBatt=11.0),
         _state(wheelTyreMonitorStatus=1),
-        _state(BrakePadFrontMM=3.0),
-        _state(EnginOilLifePct=25),
+        _state(km_since_last_brake_service=30_000),
+        _state(oil_degradation_index=0.62),
     ]
     for state in states:
         for alert in engine.evaluate(VIN, state):
@@ -362,8 +377,8 @@ def test_evaluate_with_none_values_does_not_raise(engine):
 
 def test_cooldown_dedup_same_alert_within_ttl():
     """Same alert type for same VIN should be suppressed by Redis SETNX within TTL."""
-    from alerts import dispatch  # noqa: F401  (may not exist; skip gracefully)
     pytest.importorskip("alerts.dispatch")
+    from alerts import dispatch  # noqa: F401
 
     from alerts.dispatch import AlertDispatcher
 

@@ -112,6 +112,13 @@ class SyntheticConfig:
 
     failure_injection_rate: float = 0.15  # 15% of VINs get labelled failure events
 
+    # Sessions per vehicle per day — higher = denser training data (default 4; use 8-16 for ML)
+    sessions_per_day: int = 4
+
+    # Keep every Nth second of 1-Hz session data.  1 = full resolution (~550 MB/VIN).
+    # 30 = 30-second intervals (~18 MB/VIN) — good for all feature aggregations.
+    sample_interval_seconds: int = 1
+
     seed: int = 42
 
     dealers: list = field(default_factory=lambda: [

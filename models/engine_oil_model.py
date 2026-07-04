@@ -1,3 +1,6 @@
+
+
+
 """
 Engine Oil Degradation Models.
 
@@ -29,14 +32,17 @@ FEATURE_COLS = [
     "high_rpm_duration_minutes_30d",
     "coolant_overtemp_count_30d",
     "avg_coolant_temp_7d",
-    "fuel_consumption_deviation",
+    "fuel_consumption_deviation_pct",
     "idle_hours_30d",
     "short_trip_fraction_30d",
-    "oil_degradation_index",
-    "oil_life_pct",
+    "high_rpm_stress_index",
+    # Real binary signals from TBox spec (replaces fake oil_life_pct)
+    "oil_pressure_warning_active",  # from vehOilPressureWarning
+    "mil_warning_active",           # from vehMILWarning
+    "gear_efficiency_score",
 ]
 TARGET_REG = "oil_degradation_index"
-TARGET_CLF = "oil_change_due_within_14_days"
+TARGET_CLF = "engine_oil_within_30_days"
 
 _xgb: Any = None
 _clf: Any = None
@@ -158,7 +164,7 @@ def predict_single(vin: str) -> dict:
     from features.engine_features import EngineFeaturePipeline
     feats = EngineFeaturePipeline().compute_from_influx(vin, lookback_days=90)
     if feats is None or feats.empty:
-        return {"error": f"No telemetry for VIN {vin}"}
+        return {"severity": "unknown", "error": f"No telemetry for VIN {vin}"}
     return predict_batch(feats).iloc[0].to_dict()
 
 

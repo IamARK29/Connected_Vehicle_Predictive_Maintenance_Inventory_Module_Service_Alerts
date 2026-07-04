@@ -36,11 +36,14 @@ FEATURE_COLS = [
     "avg_brake_intensity_7d",
     "deceleration_g_95th_30d",
     "brake_heat_proxy",
+    "brake_thermal_stress",
     "km_since_last_brake_service",
-    "brake_fluid_warning_active",
-    "brake_front_mm",
-    "brake_rear_mm",
-    "brake_fluid_pct",
+    # Real binary signals from TBox spec (replaces fake pad mm / fluid pct)
+    "brake_fluid_warning_active",   # from vehBrkFludLvlLow
+    "abs_activation_rate_30d",      # from vehABSF
+    "downhill_brake_stress",        # from tboxAccelZ × brake_pos
+    "lateral_brake_stress",         # from tboxAccelY × brake_pos
+    "regen_fraction",               # EV only, 0 for ICE
 ]
 TARGET_REG = "days_to_brake_replacement"
 TARGET_CLF = "brake_replacement_within_30_days"
@@ -185,7 +188,7 @@ def predict_single(vin: str) -> dict:
     from features.brake_features import BrakeFeaturePipeline
     feats = BrakeFeaturePipeline().compute_from_influx(vin, lookback_days=30)
     if feats is None or feats.empty:
-        return {"error": f"No telemetry data for VIN {vin}"}
+        return {"severity": "unknown", "error": f"No telemetry data for VIN {vin}"}
     return predict_batch(feats).iloc[0].to_dict()
 
 

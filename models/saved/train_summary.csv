@@ -1,0 +1,13 @@
+model,metric,metric_value,training_rows,training_time_s,status
+brake_wear,cv_rmse,5.283,4800,554.0,ok
+engine_oil,cv_mae,0.004,4000,278.0,ok
+hv_battery_soh,cv_auc,0.5,4000,245.2,ok
+battery_12v,xgb_cv_auc,1.0,4800,310.7,ok
+tyre_wear,cv_rmse,0.0,4800,299.0,ok
+fuel_anomaly,anomaly_rate,0.05,4800,263.4,ok
+driver_score,cv_rmse,0.14,4800,305.5,ok
+brake_wear_rul,survival,,18400,1087.0,ok
+engine_oil_rul,survival,,18400,1087.0,ok
+battery_12v_rul,survival,,18400,1087.0,ok
+tyre_wear_rul,survival,,18400,1087.0,ok
+inventory_demand,mae,5.758187551474363,66,0.3,ok

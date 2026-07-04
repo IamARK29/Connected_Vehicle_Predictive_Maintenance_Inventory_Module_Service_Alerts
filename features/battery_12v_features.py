@@ -27,6 +27,13 @@ class Battery12VFeaturePipeline(FeaturePipeline):
         manufacture_year: int = 2022,
         **_ctx: Any,
     ) -> pd.DataFrame:
+        # Allow vrow to override the manufacture_year default
+        _vrow = _ctx.get("vrow", {})
+        _mfr = getattr(_vrow, "manufacture_year", None) or (
+            _vrow.get("manufacture_year", None) if hasattr(_vrow, "get") else None
+        )
+        if _mfr is not None:
+            manufacture_year = int(_mfr)
         df = self._normalize(df)
         if df.empty or "timestamp" not in df.columns:
             return pd.DataFrame()
@@ -80,9 +87,24 @@ class Battery12VFeaturePipeline(FeaturePipeline):
         battery_age_days = float((current_year - manufacture_year) * 365 + 180)
         total_km_proxy   = float(odo.iloc[-1]) if len(odo) > 0 else np.nan
 
-        # ── Lights-on engine-off events (7d) ─────────────────────────────
-        # Synthetic data doesn't have light status; use as 0 placeholder
-        lights_on_engine_off_count_7d = 0
+        # ── Lights-on engine-off events (7d) — from real TBox light signals ─
+        # vehDipLight or vehMainLight = 1 when engine off (SysPwrMod == 0): parasitic drain
+        if "dip_light" in d7.columns or "main_light" in d7.columns:
+            lights7 = (
+                d7.get("dip_light",  pd.Series(0, index=d7.index)).fillna(0) |
+                d7.get("main_light", pd.Series(0, index=d7.index)).fillna(0)
+            )
+            engine_off7 = d7["sys_pwr_mod"].fillna(-1) == 0 if "sys_pwr_mod" in d7.columns else pd.Series(False, index=d7.index)
+            lights_on_engine_off_count_7d = int((lights7.astype(bool) & engine_off7).sum())
+        else:
+            lights_on_engine_off_count_7d = 0
+
+        # ── AC load drain (7d) — vehAC on when SysPwrMod == 1 (ACC mode) ──
+        if "ac_on" in d7.columns and "sys_pwr_mod" in d7.columns:
+            acc_drain7 = (d7["ac_on"].fillna(0) > 0) & (d7["sys_pwr_mod"].fillna(0) == 1)
+            ac_acc_drain_minutes_7d = float(acc_drain7.sum() / 60)
+        else:
+            ac_acc_drain_minutes_7d = 0.0
 
         # ── Average outside temp (7d) ─────────────────────────────────────
         avg_outside_temp_7d = float(tmp7.dropna().mean()) if len(tmp7.dropna()) > 0 else 0.0
@@ -103,10 +125,30 @@ class Battery12VFeaturePipeline(FeaturePipeline):
         # ── Current batt voltage ──────────────────────────────────────────
         voltage_current = float(batt.iloc[-1]) if len(batt) > 0 else np.nan
 
-        # ── Labels ────────────────────────────────────────────────────────
-        days_to_failure, within_7 = self._label_days_to_failure(
+        # ── Labels — voltage-trend self-supervision ───────────────────────
+        # Physics: failure threshold ~11.8V. Extrapolate resting_voltage trend.
+        _FAIL_THRESHOLD_V = 11.8
+        _WARN_THRESHOLD_V = 12.2
+        v_now = resting_voltage_7d_avg if not np.isnan(resting_voltage_7d_avg) else 12.6
+        v_trend = resting_voltage_trend_14d if not np.isnan(resting_voltage_trend_14d) else 0.0
+        if v_trend < -0.001:
+            days_to_physics = float(np.clip((v_now - _FAIL_THRESHOLD_V) / abs(v_trend), 0, 730))
+        else:
+            days_to_physics = 730.0
+        # Also flag by age: 12V batteries typically need replacement after 3 years
+        _BATTERY_WARN_AGE_YEARS = 3.0
+        within_physics = int(
+            v_now < _WARN_THRESHOLD_V or
+            overnight_voltage_drop_avg > 0.3 or
+            (battery_age_days / 365.0) >= _BATTERY_WARN_AGE_YEARS
+        )
+
+        days_to_failure, within_svc = self._label_days_to_failure(
             vin, label_df, "12v_battery_failure", t_max
         )
+        if np.isnan(days_to_failure):
+            days_to_failure = days_to_physics
+        within_7 = int(within_svc or within_physics)
 
         cold_weather_risk = max(1.0, 1.0 + (10.0 - float(tmp7.fillna(20).mean())) / 10.0) if len(tmp7) > 0 else 1.0
         overnight_drop_avg_7d = overnight_voltage_drop_avg
@@ -128,6 +170,7 @@ class Battery12VFeaturePipeline(FeaturePipeline):
             "battery_12v_health_score":         battery_12v_health_score,
             "battery_age_years":                battery_age_days / 365.0,
             "light_on_engine_off_events_7d":    lights_on_engine_off_count_7d,
+            "ac_acc_drain_minutes_7d":          ac_acc_drain_minutes_7d,
             "cold_weather_risk_multiplier":     cold_weather_risk,
             # Legacy / extra
             "overnight_voltage_drop_avg":       overnight_voltage_drop_avg,
@@ -149,87 +192,82 @@ class Battery12VFeaturePipeline(FeaturePipeline):
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 def _compute_overnight_drop(batt: pd.Series, pwr: pd.Series) -> float:
-    """Average voltage drop between end of one session and start of next."""
+    """Average voltage drop between engine-off and next engine-on (vectorised)."""
+    if len(pwr) < 2:
+        return 0.0
+    p = pwr.fillna(-1).values.astype(float)
+    b = batt.values
+    # transitions: off→on (+1 diff going positive), on→off (+1 diff going negative
+    p_int = (p > 0).astype(int)
+    diff  = np.diff(p_int)
+    off_idx = np.where(diff == -1)[0]     # indices where engine turns off
+    on_idx  = np.where(diff ==  1)[0]     # indices where engine turns on
     drops: list[float] = []
-    off_start_v: float | None = None
-
-    for i in range(1, len(pwr)):
-        prev, cur = int(pwr.iloc[i - 1]), int(pwr.iloc[i])
-        bv = float(batt.iloc[i]) if not np.isnan(batt.iloc[i]) else None
-        prev_bv = float(batt.iloc[i - 1]) if not np.isnan(batt.iloc[i - 1]) else None
-        # Engine going OFF
-        if prev > 0 and cur == 0:
-            off_start_v = prev_bv
-        # Engine starting again
-        if prev == 0 and cur > 0 and off_start_v is not None and bv is not None:
-            drops.append(off_start_v - bv)
-            off_start_v = None
-
+    for oi in off_idx:
+        # find next on-transition after this off
+        next_on = on_idx[on_idx > oi]
+        if len(next_on) == 0:
+            break
+        ni = next_on[0]
+        bv_off = b[oi] if np.isfinite(b[oi]) else None
+        bv_on  = b[ni + 1] if ni + 1 < len(b) and np.isfinite(b[ni + 1]) else None
+        if bv_off is not None and bv_on is not None:
+            drops.append(float(bv_off - bv_on))
     return float(np.mean(drops)) if drops else 0.0
 
 
 def _compute_cold_voltage_delta(batt: pd.Series, pwr: pd.Series) -> float:
-    """Voltage dip during cranking = pre-start voltage minus minimum in first 5s."""
+    """Voltage dip during cranking — vectorised."""
+    if len(pwr) < 2:
+        return 0.0
+    p_int = (pwr.fillna(-1).values > 0).astype(int)
+    b     = batt.values
+    on_idx = np.where(np.diff(p_int) == 1)[0]   # positions just before engine start
     dips: list[float] = []
-    for i in range(1, len(pwr) - 5):
-        if int(pwr.iloc[i - 1]) == 0 and int(pwr.iloc[i]) > 0:
-            pre_v = float(batt.iloc[i - 1]) if not np.isnan(batt.iloc[i - 1]) else None
-            window = batt.iloc[i:i + 5].dropna().values
-            if pre_v and len(window) > 0:
-                dips.append(pre_v - float(window.min()))
+    for i in on_idx:
+        pre_v = b[i] if i < len(b) and np.isfinite(b[i]) else None
+        window = b[i + 1: i + 6]
+        valid  = window[np.isfinite(window)]
+        if pre_v is not None and len(valid) > 0:
+            dips.append(float(pre_v - valid.min()))
     return float(np.mean(dips)) if dips else 0.0
 
 
 def _compute_under_load_voltage(df: pd.DataFrame) -> float:
-    """Min 12V during acceleration at session start (first 30s with speed > 0)."""
+    """Min 12V in first 30 rows of each drive session (vectorised)."""
     if "batt_12v" not in df.columns or "sys_pwr_mod" not in df.columns:
         return 0.0
-    pwr  = df["sys_pwr_mod"].fillna(-1).values.astype(int)
-    batt = df["batt_12v"].fillna(np.nan).values
-    speed = df["speed"].fillna(0).values if "speed" in df.columns else np.zeros(len(df))
-
+    p_int  = (df["sys_pwr_mod"].fillna(-1).values > 0).astype(int)
+    b      = df["batt_12v"].values
+    on_idx = np.where(np.diff(p_int) == 1)[0]
     minima: list[float] = []
-    in_session = False
-    session_start = 0
-    for i in range(1, len(pwr)):
-        if pwr[i - 1] == 0 and pwr[i] > 0:
-            in_session = True
-            session_start = i
-        if in_session and (i - session_start) <= 30 and speed[i] > 1:
-            pass  # collecting
-        elif in_session and (i - session_start) == 31:
-            window = batt[session_start:i]
-            valid  = window[np.isfinite(window)]
-            if len(valid) > 0:
-                minima.append(float(valid.min()))
-            in_session = False
-
+    for i in on_idx:
+        window = b[i + 1: i + 31]
+        valid  = window[np.isfinite(window)]
+        if len(valid) > 0:
+            minima.append(float(valid.min()))
     return float(np.mean(minima)) if minima else 0.0
 
 
 def _compute_parasitic_drain(batt7: pd.Series, pwr7: pd.Series) -> float:
-    """V/hour drop rate during extended OFF periods (> 1 hour)."""
+    """V/hour drop rate during extended OFF runs (> 1 hour, vectorised)."""
     if len(batt7) == 0 or len(pwr7) == 0:
         return np.nan
-
+    p_int = (pwr7.fillna(-1).values > 0).astype(int)
+    b     = batt7.values
+    # Find contiguous OFF runs using group IDs
+    group = np.cumsum(np.concatenate([[0], np.diff(p_int) != 0]))
     rates: list[float] = []
-    off_streak = 0
-    off_start_v: float | None = None
-
-    for i in range(len(pwr7)):
-        p  = int(pwr7.iloc[i])
-        bv = float(batt7.iloc[i]) if not np.isnan(batt7.iloc[i]) else None
-        if p == 0:
-            off_streak += 1
-            if off_streak == 1:
-                off_start_v = bv
-            elif off_streak > 3600 and off_start_v is not None and bv is not None:
-                hours = off_streak / 3600
-                rates.append((off_start_v - bv) / hours)
-        else:
-            off_streak = 0
-            off_start_v = None
-
+    for g in np.unique(group):
+        mask = group == g
+        if int(p_int[mask][0]) != 0:
+            continue
+        run_b = b[mask]
+        valid = run_b[np.isfinite(run_b)]
+        if len(valid) < 2 or len(valid) < 3600:  # < 1 hour at 1-sample/s
+            continue
+        hours = len(valid) / 3600.0
+        rates.append(float(valid[0] - valid[-1]) / hours)
     return float(np.mean(rates)) if rates else 0.0
 
 

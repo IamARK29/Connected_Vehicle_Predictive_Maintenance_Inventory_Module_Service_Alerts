@@ -17,6 +17,7 @@ export default function LoginPage() {
       const data = await login(username, password)
       localStorage.setItem('ap_user', username)
       localStorage.setItem('ap_role', data.role ?? 'DEALER')
+      localStorage.setItem('ap_dealer_code', data.dealer_code ?? 'ALL')
       navigate('/')
     } catch {
       setError('Invalid username or password')
@@ -29,7 +30,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-900">
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
         <h1 className="text-2xl font-bold text-gray-900 mb-1">AutoPredict</h1>
-        <p className="text-gray-500 text-sm mb-6">Sign in to the dealer portal</p>
+        <p className="text-gray-500 text-sm mb-6">Predictive Maintenance Platform</p>
 
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
@@ -69,9 +70,12 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-4 text-xs text-gray-400 text-center">
-          Demo: admin / admin123 · dealer / dealer123
-        </p>
+        <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+          <p className="text-xs text-gray-500 font-medium mb-1">Demo credentials</p>
+          <p className="text-xs text-gray-400">dealer / dealer123 — Dealer portal (DL001)</p>
+          <p className="text-xs text-gray-400">oem / oem123 — OEM portal (all dealers)</p>
+          <p className="text-xs text-gray-400">admin / admin123 — Full access</p>
+        </div>
       </div>
     </div>
   )

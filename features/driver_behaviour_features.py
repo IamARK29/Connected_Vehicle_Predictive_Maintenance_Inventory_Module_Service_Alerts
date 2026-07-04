@@ -174,11 +174,18 @@ class DriverBehaviourFeaturePipeline(FeaturePipeline):
             "worst_behaviour":              worst_behaviour,
             "peer_percentile":              50.0,   # filled by compute_batch; default 50th pctile
             "fuel_efficiency_vs_baseline":  fuel_efficiency_vs_baseline,
-            # Detailed event counts
+            # Detailed event counts / rates
             "harsh_accel_rate_30d":         harsh_accel_rate,
             "harsh_brake_rate_30d":         harsh_brake_rate,
             "overSpeed80_count_30d":        overSpeed80_count_30d,
             "overSpeed120_count_30d":       overSpeed120_count_30d,
+            # Standardised snake_case aliases used by driver_score_model
+            "overspeed_80_fraction_30d":    round(float(over80_mask.mean()), 4),
+            "overspeed_120_count_30d":      overSpeed120_count_30d,
+            "overrev_rate_30d":             round(float(overrev_rate), 4),
+            "lugging_rate_30d":             round(float(lugging_rate), 4),
+            "night_driving_fraction_30d":   0.0,   # placeholder — requires timestamp hour
+            "fuel_efficiency_score":        round(float(fuel_score), 2),
             "sudden_turn_rate_30d":         sudden_turn_rate,
             "idle_fraction_30d":            idle_fraction,
             "avg_speed_30d":                avg_speed_30d,

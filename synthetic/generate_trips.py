@@ -69,11 +69,12 @@ def _extract_trips(df: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
     """Segment a per-VIN telemetry DataFrame into trip records."""
     trips: list[dict] = []
 
-    if "VehSysPwrMod" not in df.columns or len(df) < 10:
+    pwr_col = next((c for c in ("vehSysPwrMod", "VehSysPwrMod") if c in df.columns), None)
+    if pwr_col is None or len(df) < 10:
         return trips
 
     # Detect session boundaries: transitions from non-2 to 2 (start) and 2 to non-2 (end)
-    pwr = df["VehSysPwrMod"].fillna(0).astype(int).to_numpy()
+    pwr = df[pwr_col].fillna(0).astype(int).to_numpy()
     running = (pwr == 2) | (pwr == 3)
 
     # Find contiguous running blocks
@@ -91,7 +92,7 @@ def _extract_trips(df: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
     n_pairs = min(len(starts), len(ends))
     for i in range(n_pairs):
         seg = df.iloc[starts[i]:ends[i]]
-        if len(seg) < 30:  # skip tiny segments (startup/shutdown artifacts)
+        if len(seg) < 5:  # skip tiny segments (< 5 rows at any sample interval)
             continue
         trip = _compute_trip(seg, vin, vrow, fuel_type)
         if trip:
@@ -102,9 +103,26 @@ def _extract_trips(df: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
 
 def _compute_trip(seg: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) -> dict | None:
     """Compute all trip fields from a single session segment."""
+    # Column name resolution — telemetry uses camelCase
+    def _col(*candidates):
+        for c in candidates:
+            if c in seg.columns:
+                return c
+        return None
+
     n = len(seg)
-    speed = seg["VehSpeed"].fillna(0).to_numpy(dtype=float)
-    odo   = seg["VehOdo"].ffill().to_numpy(dtype=float)
+    spd_col   = _col("vehSpeed",        "VehSpeed")
+    odo_col   = _col("vehOdo",          "VehOdo")
+    ts_col    = _col("StartTime-TimeStamp")
+    lat_col   = _col("gnssLat",         "GNSSLat")
+    lon_col   = _col("gnssLong",        "GNSSLong")
+    fuel_col  = _col("vehFuelConsumed", "VehFuelConsumed")
+    brake_col = _col("vehBrakePos",     "VehBrakePos")
+    steer_col = _col("vehSteeringAngle","VehSteeringAngle")
+    accel_col = _col("vehAccelPos",     "VehAccelPos")
+
+    speed = seg[spd_col].fillna(0).to_numpy(dtype=float) if spd_col else np.zeros(n)
+    odo   = seg[odo_col].ffill().to_numpy(dtype=float)   if odo_col else np.zeros(n)
 
     start_odo = float(odo[0])
     end_odo   = float(odo[-1])
@@ -117,23 +135,22 @@ def _compute_trip(seg: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
     max_speed = float(np.max(speed))
 
     # Timestamps
-    ts_col = "StartTime-TimeStamp"
-    if ts_col in seg.columns:
+    if ts_col:
         start_time = pd.to_datetime(seg[ts_col].iloc[0],  unit="s", utc=True).isoformat()
         end_time   = pd.to_datetime(seg[ts_col].iloc[-1], unit="s", utc=True).isoformat()
     else:
         start_time = end_time = ""
 
     # GPS
-    start_lat  = float(seg["GNSSLat"].iloc[0])  if "GNSSLat"  in seg.columns else 0.0
-    start_long = float(seg["GNSSLong"].iloc[0]) if "GNSSLong" in seg.columns else 0.0
-    end_lat    = float(seg["GNSSLat"].iloc[-1]) if "GNSSLat"  in seg.columns else 0.0
-    end_long   = float(seg["GNSSLong"].iloc[-1]) if "GNSSLong" in seg.columns else 0.0
+    start_lat  = float(seg[lat_col].iloc[0])  if lat_col else 0.0
+    start_long = float(seg[lon_col].iloc[0])  if lon_col else 0.0
+    end_lat    = float(seg[lat_col].iloc[-1]) if lat_col else 0.0
+    end_long   = float(seg[lon_col].iloc[-1]) if lon_col else 0.0
 
-    # Fuel consumed
+    # Fuel consumed (ICE/PHEV only)
     fuel_consumed = 0.0
-    if "VehFuelConsumed" in seg.columns and fuel_type in ("ICE", "PHEV"):
-        fc = seg["VehFuelConsumed"].fillna(0).to_numpy(dtype=float)
+    if fuel_col and fuel_type in ("ICE", "PHEV"):
+        fc = seg[fuel_col].fillna(0).to_numpy(dtype=float)
         fuel_consumed = max(0.0, float(fc[-1] - fc[0]))
     fuel_eff = round(fuel_consumed / trip_km * 100, 2) if trip_km > 0 and fuel_consumed > 0 else 0.0
 
@@ -144,22 +161,22 @@ def _compute_trip(seg: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
 
     # Harsh braking: brake_pos > 70 while speed > 20
     harsh_braking = 0
-    if "VehBrakePos" in seg.columns:
-        bp = seg["VehBrakePos"].fillna(0).to_numpy(dtype=float)
+    bp = seg[brake_col].fillna(0).to_numpy(dtype=float) if brake_col else np.zeros(n)
+    if brake_col:
         harsh_braking = int(np.sum((bp > 70) & (speed > 20)))
 
-    # Sudden turns: steering rate > 30°/s
+    # Sudden turns: steering rate > threshold (scaled for sample interval)
     sudden_turns = 0
-    if "VehSteeringAngle" in seg.columns:
-        steer = seg["VehSteeringAngle"].fillna(0).to_numpy(dtype=float)
+    if steer_col:
+        steer = seg[steer_col].fillna(0).to_numpy(dtype=float)
         steer_rate = np.abs(np.gradient(steer))
-        sudden_turns = int(np.sum(steer_rate > 30))
+        sudden_turns = int(np.sum(steer_rate > 5))  # 5°/step (was 30°/s at 1Hz)
 
-    # Rapid acceleration events: accel_pos change > 30 in 1 second
+    # Rapid acceleration events
     accel_events = 0
-    if "VehAccelPos" in seg.columns:
-        ap = seg["VehAccelPos"].fillna(0).to_numpy(dtype=float)
-        accel_events = int(np.sum(np.abs(np.gradient(ap)) > 30))
+    ap = seg[accel_col].fillna(0).to_numpy(dtype=float) if accel_col else np.zeros(n)
+    if accel_col:
+        accel_events = int(np.sum(np.abs(np.gradient(ap)) > 15))
 
     # Idle fraction
     idle_pct = float(np.sum(speed < 2) / n)
@@ -167,8 +184,8 @@ def _compute_trip(seg: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
     # Drive score (7 components)
     drive_score = _compute_drive_score(
         speed=speed,
-        brake_pos=seg["VehBrakePos"].fillna(0).to_numpy(dtype=float) if "VehBrakePos" in seg.columns else np.zeros(n),
-        accel_pos=seg["VehAccelPos"].fillna(0).to_numpy(dtype=float) if "VehAccelPos" in seg.columns else np.zeros(n),
+        brake_pos=bp,
+        accel_pos=ap,
         harsh_braking=harsh_braking,
         idle_fraction=idle_pct,
         over_80=over_80,

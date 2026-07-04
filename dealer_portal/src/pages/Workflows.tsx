@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useWorkflows, useAdvanceWorkflow, useTriggerWorkflow } from '../api/hooks'
+import { useWorkflows, useAdvanceWorkflow, useTriggerWorkflow, useVehicles } from '../api/hooks'
 import type { Workflow } from '../types'
 
 const STAGES = [
@@ -33,10 +33,17 @@ export default function Workflows() {
   const [triggerVin, setTriggerVin]       = useState('')
 
   const { data: workflowsRaw = [], isLoading } = useWorkflows(showCompleted)
+  const { data: vehiclesRaw = [] }              = useVehicles({ limit: 500 })
   const advance = useAdvanceWorkflow()
   const trigger = useTriggerWorkflow()
 
   const workflows = workflowsRaw as Workflow[]
+  const fleetVins: string[] = (vehiclesRaw as any[]).map((v: any) => v.vin ?? v.VIN ?? '').filter(Boolean)
+
+  // Typing in the trigger input also live-filters existing workflows below
+  const filteredWorkflows = triggerVin.trim()
+    ? workflows.filter(w => w.vin.toLowerCase().includes(triggerVin.toLowerCase()))
+    : workflows
 
   const handleTrigger = async () => {
     if (!triggerVin.trim()) return
@@ -62,16 +69,22 @@ export default function Workflows() {
         </label>
       </div>
 
-      {/* Trigger new workflow */}
+      {/* Trigger new workflow — VIN input doubles as workflow filter */}
       <div className="card">
-        <h2 className="font-semibold text-gray-900 mb-3">Trigger Workflow for VIN</h2>
-        <p className="text-xs text-gray-500 mb-3">Runs rule + ML alert engines and starts a new service workflow for the highest-severity alert found.</p>
+        <h2 className="font-semibold text-gray-900 mb-1">Trigger Workflow for VIN</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Type a VIN to filter existing workflows below, or press Trigger to run rule + ML alert engines and start a new workflow.
+        </p>
+        <datalist id="fleet-vins">
+          {fleetVins.map(v => <option key={v} value={v} />)}
+        </datalist>
         <div className="flex gap-2">
           <input
             type="text"
+            list="fleet-vins"
             value={triggerVin}
             onChange={e => setTriggerVin(e.target.value)}
-            placeholder="Enter VIN…"
+            placeholder="Enter or search VIN…"
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
             onKeyDown={e => e.key === 'Enter' && handleTrigger()}
           />
@@ -82,7 +95,21 @@ export default function Workflows() {
           >
             {trigger.isPending ? 'Triggering…' : '▶ Trigger'}
           </button>
+          {triggerVin && (
+            <button
+              onClick={() => setTriggerVin('')}
+              className="px-3 py-2 text-sm text-gray-400 hover:text-gray-700 border border-gray-200 rounded-lg"
+              title="Clear"
+            >
+              ✕
+            </button>
+          )}
         </div>
+        {triggerVin.trim() && (
+          <p className="mt-2 text-xs text-gray-400">
+            Showing {filteredWorkflows.length} of {workflows.length} workflow{workflows.length !== 1 ? 's' : ''} matching "{triggerVin}"
+          </p>
+        )}
         {trigger.data && (
           <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200 text-xs text-green-800">
             Workflow started: <span className="font-mono">{(trigger.data as any).workflow_id}</span> —{' '}
@@ -92,7 +119,7 @@ export default function Workflows() {
       </div>
 
       {/* Stage legend */}
-      <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+      <div className="flex flex-wrap gap-3 text-xs text-gray-500">
         {[{ c: 'bg-green-500', l: 'Completed' }, { c: 'bg-blue-500', l: 'Active' }, { c: 'bg-gray-200', l: 'Pending' }].map(({ c, l }) => (
           <span key={l} className="flex items-center gap-1.5">
             <span className={`w-3 h-2 rounded-full ${c}`} /> {l}
@@ -100,18 +127,22 @@ export default function Workflows() {
         ))}
       </div>
 
-      {/* Workflows table */}
+      {/* Workflows list */}
       {isLoading ? (
         <div className="text-gray-400 text-sm">Loading workflows…</div>
-      ) : workflows.length === 0 ? (
+      ) : filteredWorkflows.length === 0 ? (
         <div className="card text-center py-16">
           <span className="text-5xl">🤖</span>
-          <p className="text-gray-500 mt-4 font-medium">No active workflows</p>
-          <p className="text-gray-400 text-sm mt-1">Trigger a workflow above or wait for an alert to arrive</p>
+          <p className="text-gray-500 mt-4 font-medium">
+            {triggerVin.trim() ? `No workflows matching "${triggerVin}"` : 'No active workflows'}
+          </p>
+          <p className="text-gray-400 text-sm mt-1">
+            {triggerVin.trim() ? 'Press ▶ Trigger to start one for this VIN' : 'Trigger a workflow above or wait for an alert to arrive'}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {workflows.map(wf => (
+          {filteredWorkflows.map(wf => (
             <div key={wf.workflow_id} className={`card p-4 ${wf.escalated ? 'border-red-300 bg-red-50/30' : ''}`}>
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="min-w-0">
@@ -141,10 +172,8 @@ export default function Workflows() {
                 </div>
               </div>
 
-              {/* Stage progress bar */}
               <StageProgress current={wf.current_stage} history={wf.stage_history ?? []} />
 
-              {/* Actions */}
               {!wf.completed_at && (
                 <div className="mt-3 flex items-center justify-between">
                   <p className="text-xs text-gray-400">

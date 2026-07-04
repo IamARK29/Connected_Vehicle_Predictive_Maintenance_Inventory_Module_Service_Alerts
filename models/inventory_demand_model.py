@@ -35,7 +35,9 @@ class InventoryDemandModel:
         except ImportError:
             from sklearn.ensemble import GradientBoostingRegressor as LGBMRegressor
 
-        X = feature_df.drop(columns=[target_col])
+        numeric_cols = [c for c in feature_df.columns if c != target_col
+                        and feature_df[c].dtype.kind in "biufc"]
+        X = feature_df[numeric_cols]
         y = feature_df[target_col]
 
         self.model = LGBMRegressor(n_estimators=200, max_depth=6, learning_rate=0.05)

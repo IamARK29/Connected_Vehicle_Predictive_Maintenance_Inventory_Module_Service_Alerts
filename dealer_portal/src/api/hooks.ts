@@ -5,8 +5,13 @@ import {
   getVehicleServiceHistory, getVehicleTrips,
   getBayStatus, getAppointments, createAppointment, updateAppointmentStatus,
   getInventory, getDemandForecast,
+  getInventoryOverview, getInventoryStock, getInventoryAlerts,
+  getReorderPlan, getInventoryAnalytics, getDealerComparison,
+  getPartDetail, getInventoryTransactions,
   getWorkflows, getWorkflowStatus, advanceWorkflow, triggerWorkflow,
   chatWithAgent, generateSynthetic, getUploadStatus,
+  getOemFleetOverview, getOemModelHealth, getOemEda, getModelEda, postOemWhatIf,
+  getOemRetrainHistory, triggerOemRetrain, getOemRetrainStatus, stopOemRetrain,
 } from './client'
 
 // ── Fleet ──────────────────────────────────────────────────────────────────────
@@ -90,7 +95,32 @@ export const useInventory = (dealerCode: string) =>
   useQuery({ queryKey: ['dealer', dealerCode, 'inventory'], queryFn: () => getInventory(dealerCode), enabled: !!dealerCode })
 
 export const useDemandForecast = (dealerCode: string) =>
-  useQuery({ queryKey: ['dealer', dealerCode, 'demand-forecast'], queryFn: () => getDemandForecast(dealerCode), enabled: !!dealerCode })
+  useQuery({ queryKey: ['dealer', dealerCode, 'demand-forecast'], queryFn: () => getDemandForecast(dealerCode), enabled: !!dealerCode, staleTime: 0, refetchOnMount: 'always' })
+
+// ── Comprehensive inventory hooks ───────────────────────────────────────────
+export const useInventoryOverview = () =>
+  useQuery({ queryKey: ['inventory', 'overview'], queryFn: getInventoryOverview, refetchInterval: 120_000 })
+
+export const useInventoryStock = (params?: Record<string, string>) =>
+  useQuery({ queryKey: ['inventory', 'stock', params], queryFn: () => getInventoryStock(params) })
+
+export const useInventoryAlerts = (params?: Record<string, string>) =>
+  useQuery({ queryKey: ['inventory', 'alerts', params], queryFn: () => getInventoryAlerts(params), refetchInterval: 60_000 })
+
+export const useReorderPlan = (dealerCode?: string) =>
+  useQuery({ queryKey: ['inventory', 'reorder-plan', dealerCode], queryFn: () => getReorderPlan(dealerCode) })
+
+export const useInventoryAnalytics = (dealerCode?: string) =>
+  useQuery({ queryKey: ['inventory', 'analytics', dealerCode], queryFn: () => getInventoryAnalytics(dealerCode) })
+
+export const useDealerComparison = () =>
+  useQuery({ queryKey: ['inventory', 'dealers'], queryFn: getDealerComparison })
+
+export const usePartDetail = (partCode: string | null) =>
+  useQuery({ queryKey: ['inventory', 'parts', partCode], queryFn: () => getPartDetail(partCode!), enabled: !!partCode })
+
+export const useInventoryTransactions = (params?: Record<string, string>) =>
+  useQuery({ queryKey: ['inventory', 'transactions', params], queryFn: () => getInventoryTransactions(params) })
 
 // ── Agent ──────────────────────────────────────────────────────────────────────
 
@@ -119,6 +149,56 @@ export const useTriggerWorkflow = () => {
 export const useChatWithAgent = () =>
   useMutation({ mutationFn: ({ message, vin, history }: { message: string; vin?: string; history?: object[] }) =>
     chatWithAgent(message, vin, history) })
+
+// ── OEM ────────────────────────────────────────────────────────────────────────
+
+export const useOemFleetOverview = (groupBy = 'dealer_code') =>
+  useQuery({ queryKey: ['oem', 'fleet-overview', groupBy], queryFn: () => getOemFleetOverview(groupBy) })
+
+export const useOemModelHealth = (modelName?: string) =>
+  useQuery({ queryKey: ['oem', 'model-health', modelName], queryFn: () => getOemModelHealth(modelName) })
+
+export const useOemEda = (featureGroup: string) =>
+  useQuery({ queryKey: ['oem', 'eda', featureGroup], queryFn: () => getOemEda(featureGroup) })
+
+export const useModelEda = (modelName: string | null) =>
+  useQuery({
+    queryKey: ['oem', 'model-eda', modelName],
+    queryFn: () => getModelEda(modelName!),
+    enabled: !!modelName,
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  })
+
+export const useOemWhatIf = () =>
+  useMutation({ mutationFn: (payload: object) => postOemWhatIf(payload) })
+
+export const useOemRetrainHistory = () =>
+  useQuery({ queryKey: ['oem', 'retrain', 'history'], queryFn: getOemRetrainHistory })
+
+export const useTriggerOemRetrain = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: object) => triggerOemRetrain(payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['oem', 'retrain'] }),
+  })
+}
+
+export const useOemRetrainStatus = (jobId: string | null) =>
+  useQuery({
+    queryKey: ['oem', 'retrain', 'status', jobId],
+    queryFn: () => getOemRetrainStatus(jobId!),
+    enabled: !!jobId,
+    refetchInterval: 3000,
+  })
+
+export const useStopOemRetrain = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (jobId: string) => stopOemRetrain(jobId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['oem', 'retrain'] }),
+  })
+}
 
 // ── Upload / Synthetic ─────────────────────────────────────────────────────────
 

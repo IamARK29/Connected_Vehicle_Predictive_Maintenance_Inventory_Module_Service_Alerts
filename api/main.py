@@ -12,7 +12,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from api.routers import vehicles, fleet, dealer, agent, upload, synthetic, monitoring
+from api.routers import vehicles, fleet, dealer, agent, upload, synthetic, monitoring, oem, admin, inventory as inventory_router
 from api.ws import telemetry_stream
 from api.dependencies import create_access_token
 from api.schemas import TokenRequest
@@ -95,6 +95,9 @@ app.include_router(agent.router,            prefix="/api")
 app.include_router(upload.router,           prefix="/api")
 app.include_router(synthetic.router,        prefix="/api")
 app.include_router(monitoring.router,       prefix="/api")
+app.include_router(oem.router,              prefix="/api")
+app.include_router(admin.router,            prefix="/api")
+app.include_router(inventory_router.router, prefix="/api")
 app.include_router(telemetry_stream.router)   # WebSocket — no /api prefix (ws://)
 
 # Legacy v1 routers (mounted under /api/v1 for backwards-compat)
@@ -130,29 +133,28 @@ async def get_token(payload: TokenRequest):
     """
     Issue a JWT for API access.
 
-    - **username**: `admin` or `dealer`
-    - **password**: `admin123` / `dealer123` (demo — replace in production)
+    - **username**: `admin` / `oem` / `dealer` / `dealer2`
+    - **password**: `admin123` / `oem123` / `dealer123`
     """
-    DEMO_USERS: dict[str, tuple[str, str]] = {
-        "admin":  ("admin123",  "ADMIN"),
-        "dealer": ("dealer123", "DEALER"),
-    }
-    user = DEMO_USERS.get(payload.username)
-    if not user or user[0] != payload.password:
+    from api.routers.admin import _load_users
+    users = _load_users()
+    info = users.get(payload.username)
+    if not info or info["password"] != payload.password:
         return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
-    token = create_access_token({"sub": payload.username, "role": user[1]})
-    return {"access_token": token, "token_type": "bearer", "role": user[1]}
+    token = create_access_token({"sub": payload.username, "role": info["role"], "dealer_code": info["dealer_code"]})
+    return {"access_token": token, "token_type": "bearer", "role": info["role"], "dealer_code": info["dealer_code"]}
 
 
 # Backwards-compat alias (query-param form)
 @app.post("/api/v1/auth/token", tags=["Auth"], include_in_schema=False)
 async def get_token_v1(username: str, password: str):
-    DEMO_USERS = {"admin": ("admin123", "ADMIN"), "dealer": ("dealer123", "DEALER")}
-    user = DEMO_USERS.get(username)
-    if not user or user[0] != password:
+    from api.routers.admin import _load_users
+    users = _load_users()
+    info = users.get(username)
+    if not info or info["password"] != password:
         return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
-    token = create_access_token({"sub": username, "role": user[1]})
-    return {"access_token": token, "token_type": "bearer", "role": user[1]}
+    token = create_access_token({"sub": username, "role": info["role"], "dealer_code": info["dealer_code"]})
+    return {"access_token": token, "token_type": "bearer", "role": info["role"], "dealer_code": info["dealer_code"]}
 
 
 # ── Health endpoints ───────────────────────────────────────────────────────────

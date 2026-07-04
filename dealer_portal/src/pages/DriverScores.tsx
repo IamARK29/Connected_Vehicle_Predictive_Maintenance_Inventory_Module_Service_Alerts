@@ -1,7 +1,10 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useDriverScores } from '../api/hooks'
+import { SortTh, useSortable } from '../components/SortHeader'
 import type { DriverScore } from '../types'
+
+type DSSortKey = 'score' | 'vin' | 'risk_category' | 'percentile'
 
 const RISK_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
   low:    { bg: 'bg-green-100',  text: 'text-green-800',  label: 'Low Risk' },
@@ -23,12 +26,27 @@ function ScoreBar({ score }: { score: number }) {
   )
 }
 
+const RISK_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
+
 export default function DriverScores() {
   const { data: scoresRaw = [], isLoading } = useDriverScores()
   const scores = scoresRaw as DriverScore[]
   const [filter, setFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all')
+  const { sortKey, sortDir, onSort } = useSortable<DSSortKey>('score')
 
-  const filtered = filter === 'all' ? scores : scores.filter(s => s.risk_category === filter)
+  const riskFiltered = filter === 'all' ? scores : scores.filter(s => s.risk_category === filter)
+
+  const filtered = useMemo(() => [...riskFiltered].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    if (sortKey === 'risk_category') {
+      return ((RISK_ORDER[a.risk_category ?? 'medium'] ?? 1) - (RISK_ORDER[b.risk_category ?? 'medium'] ?? 1)) * dir
+    }
+    const av: any = (a as any)[sortKey] ?? ''
+    const bv: any = (b as any)[sortKey] ?? ''
+    if (av < bv) return -dir
+    if (av > bv) return  dir
+    return 0
+  }), [riskFiltered, sortKey, sortDir])
 
   const counts = {
     high:   scores.filter(s => s.risk_category === 'high').length,
@@ -41,7 +59,10 @@ export default function DriverScores() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Driver Scores</h1>
-        <p className="text-gray-500 text-sm mt-1">Driver behaviour leaderboard — ranked by composite score (lower = more risk)</p>
+        <p className="text-gray-500 text-sm mt-1">
+          Ranked by composite drive score from trip data (harsh braking, acceleration, speed compliance, idle time).
+          Lower score = higher risk.
+        </p>
       </div>
 
       {/* Summary cards */}
@@ -85,9 +106,12 @@ export default function DriverScores() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['Rank', 'Vehicle', 'Plate', 'Score', 'Risk', 'Percentile'].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
-              ))}
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Rank</th>
+              <SortTh label="Vehicle"        col="vin"           cur={sortKey} dir={sortDir} onSort={onSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Driver Profile</th>
+              <SortTh label="Score"          col="score"         cur={sortKey} dir={sortDir} onSort={onSort} />
+              <SortTh label="Risk"           col="risk_category" cur={sortKey} dir={sortDir} onSort={onSort} />
+              <SortTh label="Percentile"     col="percentile"    cur={sortKey} dir={sortDir} onSort={onSort} />
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -95,7 +119,7 @@ export default function DriverScores() {
               <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Loading driver scores…</td></tr>
             )}
             {!isLoading && filtered.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No records. Train the driver score model first.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No matching drivers for this filter.</td></tr>
             )}
             {filtered.map((d, i) => {
               const risk   = (d.risk_category ?? 'medium').toLowerCase()
@@ -104,12 +128,12 @@ export default function DriverScores() {
               return (
                 <tr key={d.vin} className={`hover:bg-gray-50 ${d.risk_category === 'high' ? 'bg-red-50/30' : ''}`}>
                   <td className="px-4 py-3 font-bold tabular-nums text-gray-500">
-                    {medal ? <span>{medal} {d.rank ?? i + 1}</span> : d.rank ?? i + 1}
+                    {medal ? <span>{medal} {d.rank}</span> : d.rank}
                   </td>
                   <td className="px-4 py-3">
                     <Link to={`/vehicles/${d.vin}`} className="font-mono text-xs text-blue-600 hover:underline">{d.vin}</Link>
                   </td>
-                  <td className="px-4 py-3 text-gray-700">{d.license_plate ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-700 capitalize">{d.driver_name ?? d.license_plate ?? '—'}</td>
                   <td className="px-4 py-3"><ScoreBar score={d.score} /></td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${config.bg} ${config.text}`}>

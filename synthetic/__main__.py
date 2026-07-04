@@ -29,7 +29,7 @@ def _banner(title: str) -> None:
     print(f"{'-' * 60}")
 
 
-def run(cfg: SyntheticConfig, skip: set[str], data_dir: Path) -> None:
+def run(cfg: SyntheticConfig, skip: set[str], data_dir: Path, resume: bool = False) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     fleet_df = None
@@ -57,7 +57,7 @@ def run(cfg: SyntheticConfig, skip: set[str], data_dir: Path) -> None:
         t0 = time.perf_counter()
         from synthetic.generate_telemetry import TelemetryGenerator
         gen = TelemetryGenerator(cfg)
-        gen.generate_all(fleet_df, data_dir)
+        gen.generate_all(fleet_df, data_dir, resume=resume)
         print(f"  Done in {time.perf_counter() - t0:.1f}s")
     else:
         print("[telemetry] Skipped")
@@ -94,16 +94,23 @@ def main() -> None:
         description="AutoPredict Synthetic Data Generator",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--vehicles", type=int, default=50,    help="Number of vehicles")
-    parser.add_argument("--days",     type=int, default=180,   help="Simulation days")
-    parser.add_argument("--start",    type=str, default="2024-01-01", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--seed",     type=int, default=42,    help="Random seed")
-    parser.add_argument("--data-dir", type=str, default="data/synthetic", help="Output directory")
+    parser.add_argument("--vehicles",           type=int,   default=50,    help="Number of vehicles")
+    parser.add_argument("--days",               type=int,   default=180,   help="Simulation days")
+    parser.add_argument("--sessions-per-day",   type=int,   default=4,     help="Telemetry sessions per vehicle per day")
+    parser.add_argument("--failure-rate",       type=float, default=0.15,  help="Failure injection rate (0–1)")
+    parser.add_argument("--sample-interval",    type=int,   default=1,     help="Keep every Nth second of 1-Hz data (30 = ~18 MB/VIN instead of ~550 MB)")
+    parser.add_argument("--start",              type=str,   default="2024-01-01", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--seed",             type=int,   default=42,    help="Random seed")
+    parser.add_argument("--data-dir",         type=str,   default="data/synthetic", help="Output directory")
     parser.add_argument(
         "--skip", nargs="*",
         choices=["fleet", "telemetry", "trips", "service"],
         default=[],
         help="Steps to skip (re-uses existing CSVs)",
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Skip telemetry VINs that already have a CSV file (for interrupted runs)",
     )
     args = parser.parse_args()
 
@@ -112,18 +119,28 @@ def main() -> None:
         num_days=args.days,
         start_date=args.start,
         seed=args.seed,
+        sessions_per_day=args.sessions_per_day,
+        failure_injection_rate=args.failure_rate,
+        sample_interval_seconds=args.sample_interval,
     )
 
     print(f"\nAutoPredict Synthetic Data Generator")
-    print(f"  Vehicles : {cfg.num_vehicles}")
-    print(f"  Days     : {cfg.num_days}")
-    print(f"  Start    : {cfg.start_date}")
-    print(f"  Seed     : {cfg.seed}")
-    print(f"  Output   : {Path(args.data_dir).resolve()}")
+    est_mb = cfg.num_vehicles * cfg.num_days * cfg.sessions_per_day * 67 * 60 / cfg.sample_interval_seconds * 300 / 1e9
+    print(f"  Vehicles         : {cfg.num_vehicles}")
+    print(f"  Days             : {cfg.num_days}")
+    print(f"  Sessions/day     : {cfg.sessions_per_day}")
+    print(f"  Sample interval  : every {cfg.sample_interval_seconds}s")
+    print(f"  Failure rate     : {cfg.failure_injection_rate:.0%}")
+    print(f"  Start            : {cfg.start_date}")
+    print(f"  Seed             : {cfg.seed}")
+    print(f"  Est. output size : ~{est_mb:.1f} GB")
+    print(f"  Output           : {Path(args.data_dir).resolve()}")
     if args.skip:
         print(f"  Skipping : {', '.join(args.skip)}")
+    if args.resume:
+        print(f"  Resume   : yes (existing telemetry CSVs will not be regenerated)")
 
-    run(cfg, skip=set(args.skip or []), data_dir=Path(args.data_dir))
+    run(cfg, skip=set(args.skip or []), data_dir=Path(args.data_dir), resume=args.resume)
 
 
 if __name__ == "__main__":

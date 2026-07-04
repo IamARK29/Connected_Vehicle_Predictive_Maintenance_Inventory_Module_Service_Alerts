@@ -116,7 +116,7 @@ def test_protected_endpoint_bad_token(client):
 # ── Vehicles ──────────────────────────────────────────────────────────────────
 
 def test_get_vehicles_authenticated(client, dealer_h):
-    with patch("api.routers.vehicles._query_vehicles", return_value=[]):
+    with patch("api.routers.vehicles._load_fleet", return_value=[]):
         resp = client.get("/api/vehicles", headers=dealer_h)
     assert resp.status_code in (200, 404, 500)  # may fail if no DB; ensure not 401
 

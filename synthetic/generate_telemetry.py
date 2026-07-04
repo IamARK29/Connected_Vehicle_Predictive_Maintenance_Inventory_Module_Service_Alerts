@@ -1,6 +1,10 @@
 """
 Synthetic Telemetry Generator — physically consistent 1-second vehicle telemetry.
 
+Uses ONLY real MG TBox Big Data Specification column names.
+ICE vehicles: channels 1-18 + 23 (no BMS).
+EV/PHEV vehicles: all channels including 19-22 (BMS signals).
+
 Physical rules enforced:
  1. Driving sessions (1-4/day) with SysPwrMod state machine
  2. Speed/RPM/gear correlation via gear-ratio model
@@ -10,8 +14,11 @@ Physical rules enforced:
  6. Seasonal temperature + coolant exponential warmup curve
  7. 12V battery voltage tracks alternator charging / parasitic drain
  8. Tyre pressure slow leak (-0.5 kPa/day) + temperature effect
- 9. HV battery SOC/SoH per charge-cycle degradation
+ 9. HV battery SOC per charge-cycle (SOH derived via Coulomb counting in pipeline)
 10. Failure injection for 15% VINs with pre-failure intensity curves
+11. Real binary warning signals: vehOilPressureWarning, vehMILWarning, vehBrkFludLvlLow, vehABSF
+12. TPMS: wheelTyreMonitorStatus = 1 when any tyre < 180 kPa
+13. EV thermal runaway signals: vehBMSCMUFlt, vehBMSCellVoltFlt, vehBMSPackTemFlt
 """
 from __future__ import annotations
 
@@ -26,10 +33,7 @@ from synthetic.config import SyntheticConfig, DRIVER_ARCHETYPES
 
 # ── Physical constants ─────────────────────────────────────────────────────
 
-# RPM = speed_kph × factor[gear]
 _GEAR_RPM_FACTOR = [0.0, 170.0, 65.0, 37.0, 26.0, 19.0, 15.0]  # idx 0=idle, 1-6
-
-# Speed thresholds for gear changes (kph)
 _GEAR_UP_SPEED   = [0, 10, 30, 60, 90, 110, 999]
 _GEAR_DOWN_SPEED = [0,  5, 20, 50, 80, 100, 999]
 
@@ -39,42 +43,45 @@ MAX_RPM  = 6800
 _AC_PENALTY   = 0.25   # fuel rate multiplier when AC is on
 _REGEN_FRAC   = 0.18   # fraction of braking energy recovered by EV regen
 
-_COOLANT_FINAL  = 91.0    # normal operating temp (°C)
-_COOLANT_TAU_S  = 240     # warm-up time constant (seconds)
-_OVERHEAT_FINAL = 107.0   # failure-injection target temp (°C)
+_COOLANT_FINAL  = 91.0
+_COOLANT_TAU_S  = 240
+_OVERHEAT_FINAL = 107.0
 
-_BATT_CHARGE_V   = 14.1   # V while alternator running
+_BATT_CHARGE_V   = 14.1
 _BATT_DRAIN_RATE = 0.003  # V/minute when engine off
 
-_TYRE_NORMAL  = np.array([232.0, 232.0, 226.0, 226.0])  # FL FR RL RR (kPa)
-_TYRE_LEAK    = 0.5 / (24 * 60)                          # kPa/second natural leak
-_TYRE_TEMP_K  = 0.10                                     # kPa/°C above 25°C baseline
+# Tyre pressures in kPa (decoded, not encoded N values)
+_TYRE_NORMAL  = np.array([232.0, 232.0, 226.0, 226.0])  # FL FR RL RR
+_TYRE_LEAK    = 0.5 / (24 * 60)  # kPa/second natural leak
+_TYRE_TEMP_K  = 0.10             # kPa/°C above 25°C
+
+# EV battery constants
+_EV_EFFICIENCY_KWHKM = 0.18   # typical MG ZS EV: 18 kWh/100km
+
 
 # ── Driver profile parameters ──────────────────────────────────────────────
 
 def _profile_from_archetype(name: str) -> dict:
-    """Build speed-profile params from DRIVER_ARCHETYPES entry."""
     a = DRIVER_ARCHETYPES.get(name)
     if a is None:
         a = DRIVER_ARCHETYPES.get("urban_commuter", {})
     ms = a.get("max_speed_kph", 80)
     accel_tau = max(1.0, 10.0 - a.get("accel_rate_kph_per_s", 4.0))
-    idle_f = a.get("idle_fraction", 0.15)
     return {
-        "max_speed": ms,
-        "target_bands": [(ms * 0.5, ms), (ms * 0.25, ms * 0.7), (0, ms * 0.4)],
-        "accel_tau": accel_tau,
-        "idle_fraction": idle_f,
-        "cruise_prob": a.get("cruise_prob", 0.05),
+        "max_speed":      ms,
+        "target_bands":   [(ms * 0.5, ms), (ms * 0.25, ms * 0.7), (0, ms * 0.4)],
+        "accel_tau":      accel_tau,
+        "idle_fraction":  a.get("idle_fraction", 0.15),
+        "cruise_prob":    a.get("cruise_prob", 0.05),
+        "elevation_sigma": a.get("elevation_change_m_per_km", 0),
     }
 
 
 _PROFILE: dict[str, dict] = {}
 for _name in DRIVER_ARCHETYPES:
     _PROFILE[_name] = _profile_from_archetype(_name)
-# Legacy aliases
 _PROFILE["normal"] = _PROFILE.get("urban_commuter", _profile_from_archetype("urban_commuter"))
-_PROFILE["eco"] = _PROFILE.get("eco_driver", _profile_from_archetype("eco_driver"))
+_PROFILE["eco"]    = _PROFILE.get("eco_driver",     _profile_from_archetype("eco_driver"))
 
 
 class TelemetryGenerator:
@@ -86,19 +93,34 @@ class TelemetryGenerator:
 
     # ── Public entry point ─────────────────────────────────────────────────
 
-    def generate_all(self, fleet_df: pd.DataFrame, out_dir: Path) -> None:
+    def generate_all(self, fleet_df: pd.DataFrame, out_dir: Path, resume: bool = False) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
-        failure_plan   = self._plan_failures(fleet_df)
+        failure_plan = self._plan_failures(fleet_df)
         manifest_rows: list[dict] = []
         combined_chunks: list[pd.DataFrame] = []
 
         for _, vrow in fleet_df.iterrows():
-            vin   = str(vrow["vin"])
-            specs = failure_plan.get(vin, [])
+            vin      = str(vrow["vin"])
+            specs    = failure_plan.get(vin, [])
+            csv_path = out_dir / f"telemetry_{vin}.csv"
+
+            if resume and csv_path.exists():
+                print(f"  {vin} ... SKIPPED (exists)")
+                sample = pd.read_csv(csv_path, low_memory=False).sample(min(10_000, int(1e9)), random_state=42)
+                combined_chunks.append(sample)
+                for sp in specs:
+                    manifest_rows.append({
+                        "vin":                vin,
+                        "failure_type":       sp["ftype"],
+                        "injection_date":     sp["injection_date"].date().isoformat(),
+                        "failure_date":       sp["failure_date"].date().isoformat(),
+                        "affected_component": sp.get("affected", ""),
+                    })
+                continue
+
             print(f"  {vin} ({vrow['fuel_type']}, {vrow['driver_profile']}) ...", end=" ", flush=True)
 
             df = self._generate_for_vin(vrow, specs)
-            csv_path = out_dir / f"telemetry_{vin}.csv"
             df.to_csv(csv_path, index=False)
             print(f"OK {len(df):,} rows -> {csv_path.name}")
 
@@ -182,18 +204,16 @@ class TelemetryGenerator:
         base_l100km  = float(vrow["base_fuel_l100km"])     if pd.notna(vrow.get("base_fuel_l100km"))     else 9.0
 
         start_dt = datetime.strptime(self.cfg.start_date, "%Y-%m-%d")
+        is_ev    = fuel_type in ("EV", "PHEV")
 
         # Per-VIN persistent state
-        soc_pct       = float(self.rng.uniform(70, 90)) if fuel_type in ("EV", "PHEV") else None
-        soh_pct       = 98.5 if fuel_type in ("EV", "PHEV") else None
-        charge_cycles = 0
-        fuel_l        = fuel_tank_l * float(self.rng.uniform(0.5, 0.9))
-        batt_12v      = 12.6
-        tyre_kpa      = _TYRE_NORMAL.copy()
-        brake_front   = 10.0
-        brake_rear    = 9.5
-        brake_fluid   = 100.0
-        oil_life      = 100.0
+        soc_pct           = float(self.rng.uniform(70, 90)) if is_ev else None
+        charge_cycles     = 0
+        fuel_l            = fuel_tank_l * float(self.rng.uniform(0.5, 0.9))
+        batt_12v          = 12.6
+        tyre_kpa          = _TYRE_NORMAL.copy()
+        km_since_charge   = 0.0   # EV only
+        used_kwh_since_charge = 0.0  # EV only
 
         all_frames: list[pd.DataFrame] = []
 
@@ -205,9 +225,8 @@ class TelemetryGenerator:
                 specs, datetime.combine(date, datetime.min.time())
             )
 
-            n_sessions    = int(self.rng.integers(1, 5))
+            n_sessions    = int(self.rng.integers(max(1, self.cfg.sessions_per_day - 1), self.cfg.sessions_per_day + 1))
             session_hours = sorted(float(h) for h in self.rng.uniform(6, 22, size=n_sessions))
-            odo_day_start = odometer
 
             for s_idx, hour in enumerate(session_hours):
                 session_start = date + timedelta(
@@ -215,14 +234,15 @@ class TelemetryGenerator:
                 )
                 duration_s = int(self.rng.integers(15 * 60, 120 * 60))
 
-                (frame, odometer, soc_pct, fuel_l,
-                 last_batt_12v, charge_cycles, soh_pct) = self._build_session(
+                (frame, odometer, soc_pct, fuel_l, last_batt_12v,
+                 charge_cycles, km_since_charge,
+                 used_kwh_since_charge) = self._build_session(
                     vin=vin,
                     start_dt=session_start,
                     n_sec=duration_s,
+                    step=self.cfg.sample_interval_seconds,
                     odometer=odometer,
                     soc_pct=soc_pct,
-                    soh_pct=soh_pct,
                     charge_cycles=charge_cycles,
                     fuel_l=fuel_l,
                     fuel_tank_l=fuel_tank_l,
@@ -230,10 +250,8 @@ class TelemetryGenerator:
                     bat_kwh=bat_kwh,
                     batt_12v=batt_12v,
                     tyre_kpa=tyre_kpa,
-                    brake_front=brake_front,
-                    brake_rear=brake_rear,
-                    brake_fluid=brake_fluid,
-                    oil_life=oil_life,
+                    km_since_charge=km_since_charge,
+                    used_kwh_since_charge=used_kwh_since_charge,
                     out_temp=out_temp,
                     home_lat=home_lat,
                     home_long=home_long,
@@ -244,7 +262,6 @@ class TelemetryGenerator:
                 all_frames.append(frame)
                 batt_12v = last_batt_12v
 
-                # Parasitic drain during park gap between sessions
                 park_h   = (session_hours[s_idx + 1] - hour) if s_idx < n_sessions - 1 else 2.0
                 batt_12v = max(11.2, batt_12v - _BATT_DRAIN_RATE * park_h * 60)
 
@@ -263,60 +280,50 @@ class TelemetryGenerator:
             tyre_kpa -= _TYRE_LEAK * 86_400
             tyre_kpa  = np.clip(tyre_kpa, 80, 280)
 
-            # Brake wear proportional to km driven today
-            day_km = odometer - odo_day_start
-            arch = DRIVER_ARCHETYPES.get(driver_profile, {})
-            harsh_rate = arch.get("harsh_brake_per_100km", 3.0)
-            w = 0.00001 * (1 + harsh_rate / 5.0)
-            if "brake_degradation" in fail_ctx:
-                w *= 1.0 + 1.5 * fail_ctx["brake_degradation"]
-            brake_front = max(0.5, brake_front - day_km * w * 1.1)
-            brake_rear  = max(0.5, brake_rear  - day_km * w)
-            brake_fluid = max(50.0, brake_fluid - day_km * 0.0001)
-
-            oil_rate = 0.001 + (0.0008 if "oil_degradation" in fail_ctx else 0.0)
-            oil_life  = max(0.0, oil_life - day_km * oil_rate)
-            if oil_life <= 0:
-                oil_life = 100.0  # simulated oil service
-
         return pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
 
     # ── Session builder ──────────────────────────────────────────────────────
 
     def _build_session(
-        self, vin, start_dt, n_sec, odometer, soc_pct, soh_pct, charge_cycles,
+        self, vin, start_dt, n_sec, odometer, soc_pct, charge_cycles,
         fuel_l, fuel_tank_l, base_l100km, bat_kwh, batt_12v, tyre_kpa,
-        brake_front, brake_rear, brake_fluid, oil_life, out_temp,
-        home_lat, home_long, driver_profile, fuel_type, fail_ctx,
+        km_since_charge, used_kwh_since_charge,
+        out_temp, home_lat, home_long, driver_profile, fuel_type, fail_ctx,
+        step: int = 1,
     ):
-        rng = self.rng
+        rng   = self.rng
+        is_ev = fuel_type in ("EV", "PHEV")
+
+        # Simulate at 'step'-second resolution: each row represents `dt` real seconds
+        dt    = float(max(1, step))
+        n_sec = max(10, n_sec // max(1, step))  # rows to generate
 
         # ── Speed profile ─────────────────────────────────────────────────
         speed = _gen_speed_profile(n_sec, driver_profile, rng)
 
-        # ── Gear selection ─────────────────────────────────────────────────
-        gear  = np.zeros(n_sec, dtype=int)
-        cur_g = 1
-        for t in range(n_sec):
-            s = speed[t]
-            if s < 0.5:
-                cur_g = 0
-            else:
-                if cur_g == 0:
-                    cur_g = 1
-                if cur_g < 6 and s > _GEAR_UP_SPEED[cur_g]:
-                    cur_g = min(6, cur_g + 1)
-                elif cur_g > 1 and s < _GEAR_DOWN_SPEED[cur_g - 1]:
-                    cur_g = max(1, cur_g - 1)
-            gear[t] = cur_g
+        # ── Gear selection (vectorized speed-threshold lookup) ────────────
+        if is_ev:
+            gear = np.where(speed > 0.5, 3, 0).astype(int)
+        else:
+            gear = np.where(speed < 0.5,  0,
+                   np.where(speed < 10,   1,
+                   np.where(speed < 30,   2,
+                   np.where(speed < 60,   3,
+                   np.where(speed < 90,   4,
+                   np.where(speed < 110,  5, 6)))))).astype(int)
 
-        # ── RPM ───────────────────────────────────────────────────────────
-        rpm_factors = np.array([_GEAR_RPM_FACTOR[g] for g in gear])
-        rpm = np.where(gear > 0, speed * rpm_factors, float(IDLE_RPM))
-        rpm = np.clip(rpm + rng.normal(0, 60, n_sec), 600, MAX_RPM)
+        # ── RPM (ICE only; 0 for EV parked, motor rpm mapped for EV) ────
+        rpm_factors = np.array([_GEAR_RPM_FACTOR[g] if g < 7 else 0.0 for g in gear])
+        if is_ev:
+            # EV motor speed scales with vehicle speed (~approx motor RPM)
+            rpm = np.where(speed > 0.5, speed * 35 + rng.normal(0, 50, n_sec), 0.0)
+            rpm = np.clip(rpm, 0, 12000)
+        else:
+            rpm = np.where(gear > 0, speed * rpm_factors, float(IDLE_RPM))
+            rpm = np.clip(rpm + rng.normal(0, 60, n_sec), 600, MAX_RPM)
 
-        # ── SysPwrMod state machine: startup → running → shutdown ────────
-        pwr_mod       = np.full(n_sec, 2, dtype=int)  # 2 = driving
+        # ── SysPwrMod: 0=Off, 1=ACC, 2=Run, 3=Crank ─────────────────────
+        pwr_mod       = np.full(n_sec, 2, dtype=int)
         ramp_s        = min(5, n_sec)
         pwr_mod[:ramp_s] = [0, 1, 3, 3, 2][:ramp_s]
         pwr_mod[-ramp_s:] = [2, 2, 1, 1, 0][::-1][:ramp_s]
@@ -331,43 +338,73 @@ class TelemetryGenerator:
         brake_pos = np.clip(brake_pos + rng.normal(0, 1, n_sec), 0, 100)
         brake_pos = np.where((accel_pos > 20) & (brake_pos > 20), 0.0, brake_pos)
 
-        # Steering angle and forward acceleration
         steering = np.clip(np.cumsum(rng.normal(0, 0.5, n_sec)) * 5.0, -180, 180)
-        accel_x  = np.clip(dspeed / 3.6 * 10, -200, 200)
+
+        # ── Longitudinal, lateral, and vertical acceleration ──────────────
+        # tboxAccelX: longitudinal (forward/back) in g × 1000
+        accel_x = np.clip(dspeed / 3.6 * 10, -200, 200)
+
+        # tboxAccelY: lateral G from steering rate (cornering)
+        steer_rate = np.gradient(steering)
+        lateral_g  = speed * np.abs(steer_rate) * 0.0005
+        accel_y    = np.clip(lateral_g + rng.normal(0, 0.01, n_sec), -20.0, 20.0)
+
+        # tboxAccelZ: vertical G from terrain elevation changes
+        p    = _PROFILE[driver_profile] if driver_profile in _PROFILE else _PROFILE["normal"]
+        alt_sigma = p.get("elevation_sigma", 0) * 0.01 + 0.3
+        gnss_alt  = 10.0 + np.cumsum(rng.normal(0, alt_sigma, n_sec))
+        alt_grad  = np.gradient(gnss_alt)
+        accel_z   = np.clip(alt_grad * 0.1 + rng.normal(0, 0.05, n_sec), -20.0, 20.0)
 
         # ── Coolant temperature (exponential warm-up) ────────────────────
         t_final = _COOLANT_FINAL
         if "overheating" in fail_ctx:
             t_final += (_OVERHEAT_FINAL - _COOLANT_FINAL) * fail_ctx["overheating"]
-        ts           = np.arange(n_sec, dtype=float)
+        ts           = np.arange(n_sec, dtype=float) * dt
         coolant_temp = t_final - (t_final - out_temp) * np.exp(-ts / _COOLANT_TAU_S)
         coolant_temp = np.clip(coolant_temp + rng.normal(0, 0.5, n_sec), out_temp, 115.0)
-        oil_temp     = np.clip(coolant_temp - 5 + rng.normal(0, 1, n_sec), out_temp, 130.0)
+
+        # ── HVAC signals ──────────────────────────────────────────────────
+        driving_mask = pwr_mod > 0
+        ac_on_arr    = np.where(driving_mask & (out_temp > 26), 1, 0)
+        fan_speed_raw = max(0, int((out_temp - 26) / 2))
+        ac_fan_arr   = np.where(ac_on_arr > 0, np.clip(fan_speed_raw, 1, 8), 0)
+        inside_temp  = out_temp + 5 - 6 * float(out_temp > 26) + rng.normal(0, 0.5, n_sec)
+        inside_temp  = np.clip(inside_temp, 15, 45)
+
+        # ── Lighting signals ──────────────────────────────────────────────
+        hour_arr      = start_dt.hour + np.arange(n_sec) / 3600
+        night_arr     = ((hour_arr % 24 > 19) | (hour_arr % 24 < 7)).astype(int)
+        rain_arr      = (rng.random(n_sec) < 0.08).astype(int) * rng.integers(1, 4, n_sec)
+        dip_light     = np.where(driving_mask & ((night_arr > 0) | (rain_arr > 1)), 1, 0)
+        main_light    = np.where(driving_mask & (night_arr > 0) & (rng.random(n_sec) < 0.15), 1, 0)
+        side_light    = np.where(driving_mask, 1, 0)
+        night_det     = night_arr
 
         # ── Fuel consumption (ICE / PHEV) ──────────────────────────────────
         rpm_factor    = np.clip((rpm - 800) / 3000, 0, 1)
-        ac_on         = float(out_temp > 26)
+        ac_scalar     = float(out_temp > 26)
         fuel_rate_l_s = (
             (base_l100km / 100) * (speed / 3600) *
-            (1 + 0.35 * rpm_factor) *
-            (1 + _AC_PENALTY * ac_on)
+            (1 + 0.35 * rpm_factor) * (1 + _AC_PENALTY * ac_scalar)
         )
         fuel_rate_l_s = np.where(speed < 1, base_l100km / 100 * 0.4 / 3600, fuel_rate_l_s)
-        if "oil_degradation" in fail_ctx:
+        if not is_ev and "oil_degradation" in fail_ctx:
             fuel_rate_l_s *= 1.0 + 0.15 * fail_ctx["oil_degradation"]
 
-        # ── 12V battery voltage (alternator charges while running) ────────
+        # ── 12V battery voltage ────────────────────────────────────────────
         batt_v_arr = np.full(n_sec, _BATT_CHARGE_V) + rng.normal(0, 0.05, n_sec)
         if "12v_battery_failure" in fail_ctx:
             batt_v_arr -= fail_ctx["12v_battery_failure"] * 1.5
 
         # ── Tyre pressures ─────────────────────────────────────────────────
-        tyre_temp = out_temp + 15 + speed * 0.1 + rng.normal(0, 3, n_sec)
-        tp        = tyre_kpa.copy()
-        tyre_fl   = tp[0] + _TYRE_TEMP_K * (tyre_temp - 25) - rng.uniform(0, 0.3, n_sec)
-        tyre_fr   = tp[1] + _TYRE_TEMP_K * (tyre_temp - 25) - rng.uniform(0, 0.3, n_sec)
-        tyre_rl   = tp[2] + _TYRE_TEMP_K * (tyre_temp - 25) - rng.uniform(0, 0.3, n_sec)
-        tyre_rr   = tp[3] + _TYRE_TEMP_K * (tyre_temp - 25) - rng.uniform(0, 0.3, n_sec)
+        tp      = tyre_kpa.copy()
+        t_delta = _TYRE_TEMP_K * (out_temp + 15 + speed * 0.1 - 25)
+        tyre_fl = tp[0] + t_delta - rng.uniform(0, 0.3, n_sec)
+        tyre_fr = tp[1] + t_delta - rng.uniform(0, 0.3, n_sec)
+        tyre_rl = tp[2] + t_delta - rng.uniform(0, 0.3, n_sec)
+        tyre_rr = tp[3] + t_delta - rng.uniform(0, 0.3, n_sec)
+
         if "tyre_puncture" in fail_ctx and fail_ctx["tyre_puncture"] > 0.8:
             arr_map = {"FL": tyre_fl, "FR": tyre_fr, "RL": tyre_rl, "RR": tyre_rr}
             pt_arr  = arr_map.get(str(fail_ctx.get("_affected", "FL")), tyre_fl)
@@ -375,136 +412,261 @@ class TelemetryGenerator:
             mid     = n_sec // 2
             pt_arr[mid:] = np.maximum(80, pt_arr[mid:] - drop)
 
-        # ── EV / PHEV HV battery ────────────────────────────────────────────
-        hv_soc_arr  = np.full(n_sec, np.nan)
-        hv_soh_arr  = np.full(n_sec, np.nan)
-        hv_pack_v   = np.full(n_sec, np.nan)
-        hv_pack_a   = np.full(n_sec, np.nan)
-        hv_cell_max = np.full(n_sec, np.nan)
-        hv_cell_min = np.full(n_sec, np.nan)
-        hv_temp_arr = np.full(n_sec, np.nan)
+        # TPMS: 0=OK, 1=Deflation Warning, 5=Sensor not detected
+        tpms_status = np.where(
+            (tyre_fl < 180) | (tyre_fr < 180) | (tyre_rl < 180) | (tyre_rr < 180),
+            1, 0
+        ).astype(int)
 
-        if fuel_type in ("EV", "PHEV") and bat_kwh and soc_pct is not None:
-            v_ms      = speed / 3.6
-            power_kw  = 0.10 * speed + 0.03 * np.abs(accel_x) * v_ms / 100 + ac_on * 1.5
-            regen     = np.where(dspeed < -0.5, np.abs(dspeed) * v_ms * 0.8 * _REGEN_FRAC, 0.0)
-            net_e_kwh = (power_kw - regen) / 3600  # per second → kWh/s
+        # ── Real binary warning signals ────────────────────────────────────
+        # Brake fluid low: real binary signal, 1 during advanced brake degradation
+        brake_degrad = fail_ctx.get("brake_degradation", 0.0)
+        brkflud_warn = np.full(n_sec, int(brake_degrad > 0.75), dtype=int)
 
-            soc_arr = np.empty(n_sec)
-            cur_soc = soc_pct
-            for t in range(n_sec):
-                cur_soc    = float(np.clip(cur_soc - net_e_kwh[t] / bat_kwh * 100, 0, 100))
-                soc_arr[t] = cur_soc
-            soc_pct = float(soc_arr[-1])
+        # ABS fault: occasional spurious signal during hard braking
+        abs_fault = np.where(
+            (brake_pos > 175) & (np.abs(accel_x) > 100) & (rng.random(n_sec) < 0.003),
+            1, 0
+        ).astype(int)
 
-            if soc_pct < 20:
-                charge_cycles += 1
-                soc_pct = min(90.0, soc_pct + 50.0)   # fast charge
-                soh_pct = max(60.0, (soh_pct or 98.5) - 0.06)
-
-            hv_soc_arr = soc_arr
-            hv_soh_val = soh_pct or 98.5
-            hv_soh_arr = np.full(n_sec, hv_soh_val)
-
-            cell_v  = 3.3 + soc_arr / 100 * 0.9
-            spread  = 0.02 + (1 - hv_soh_val / 100) * 0.6
-            if "hv_battery_degradation" in fail_ctx:
-                spread += 0.04 * fail_ctx["hv_battery_degradation"]
-            hv_cell_max = np.clip(cell_v + spread / 2 + rng.normal(0, 0.003, n_sec), 3.0, 4.25)
-            hv_cell_min = np.clip(cell_v - spread / 2 + rng.normal(0, 0.003, n_sec), 2.8, 4.20)
-
-            nom_v       = 400 if bat_kwh > 30 else 200
-            hv_pack_v   = nom_v * (soc_arr / 100 * 0.15 + 0.85) + rng.normal(0, 1, n_sec)
-            hv_pack_a   = np.clip(power_kw * 1000 / (hv_pack_v + 1e-6), -200, 500)
-            hv_temp_arr = np.clip(25 + power_kw / bat_kwh * 8 + rng.normal(0, 0.5, n_sec), -10, 50)
+        # ── ICE-only binary warnings ─────────────────────────────────────
+        oil_degrad = fail_ctx.get("oil_degradation", 0.0)
+        overheat   = fail_ctx.get("overheating", 0.0)
+        oil_press_warn = np.full(n_sec, int(oil_degrad > 0.70), dtype=int)
+        mil_warn       = np.full(n_sec, int(oil_degrad > 0.85 or overheat > 0.70), dtype=int)
 
         # ── Odometer ───────────────────────────────────────────────────────
-        odo_arr  = odometer + np.cumsum(speed / 3600)
+        odo_arr  = odometer + np.cumsum(speed / 3600 * dt)
         odometer = float(odo_arr[-1])
 
         # ── Fuel level ─────────────────────────────────────────────────────
-        if fuel_type in ("ICE", "PHEV"):
-            fuel_l = max(2.0, fuel_l - float(np.sum(fuel_rate_l_s)))
+        if not is_ev:
+            fuel_l = max(2.0, fuel_l - float(np.sum(fuel_rate_l_s * dt)))
         fuel_pct = float(np.clip(fuel_l / fuel_tank_l * 100, 0, 100))
 
-        # ── GPS random walk around home location ───────────────────────────
-        lat_walk  = home_lat  + np.cumsum(rng.normal(0, 0.00008, n_sec))
-        long_walk = home_long + np.cumsum(rng.normal(0, 0.00010, n_sec))
+        # ── GPS random walk ────────────────────────────────────────────────
+        lat_walk  = home_lat  + np.cumsum(rng.normal(0, 0.00008 * dt, n_sec))
+        long_walk = home_long + np.cumsum(rng.normal(0, 0.00010 * dt, n_sec))
         gnss_head = (np.arctan2(np.gradient(long_walk), np.gradient(lat_walk)) * 180 / math.pi) % 360
         gnss_sats = np.clip(rng.integers(8, 15, n_sec), 4, 14)
 
         # ── Timestamps ─────────────────────────────────────────────────────
-        unix_ts = [int((start_dt + timedelta(seconds=i)).timestamp()) for i in range(n_sec)]
-        dates   = [(start_dt + timedelta(seconds=i)).strftime("%Y-%m-%d") for i in range(n_sec)]
+        unix_ts = [int((start_dt + timedelta(seconds=int(i * dt))).timestamp()) for i in range(n_sec)]
+        dates   = [(start_dt + timedelta(seconds=int(i * dt))).strftime("%Y-%m-%d") for i in range(n_sec)]
 
-        # Label: pick the first non-internal key from fail_ctx
-        fail_keys = [k for k in fail_ctx if not k.startswith("_")]
+        fail_keys      = [k for k in fail_ctx if not k.startswith("_")]
         fail_label     = fail_keys[0] if fail_keys else ""
         fail_intensity = round(float(fail_ctx.get(fail_label, 0.0)), 3) if fail_label else 0.0
 
-        # ── Assemble DataFrame ─────────────────────────────────────────────
-        frame = pd.DataFrame({
-            "VIN":                  vin,
-            "StartTime-TimeStamp":  unix_ts,
-            "StartTime-Date":       dates,
-            "VehSpeed":             np.round(speed, 1),
-            "VehSysPwrMod":         pwr_mod,
-            "VehRPM":               np.round(rpm).astype(int),
-            "VehGearPos":           gear,
-            "VehSteeringAngle":     np.round(steering, 1),
-            "VehBrakePos":          np.round(brake_pos, 1),
-            "VehAccelPos":          np.round(accel_pos, 1),
-            "VehAccelX":            np.round(accel_x, 1),
-            "VehBatt":              np.round(batt_v_arr, 2),
-            "VehOdo":               np.round(odo_arr, 2),
-            "FuelTankLevel":        np.round(np.full(n_sec, fuel_pct), 1),
-            "VehFuelConsumed":      np.round(
-                np.cumsum(fuel_rate_l_s) if fuel_type in ("ICE", "PHEV") else np.zeros(n_sec), 4
-            ),
-            "EnginOilLifePct":      np.round(np.clip(oil_life + rng.normal(0, 0.1, n_sec), 0, 100), 1),
-            "VehCoolantTemp":       np.round(coolant_temp, 1),
-            "VehOutsideTemp":       np.round(out_temp + rng.normal(0, 0.3, n_sec), 1),
-            "VehEngineOilTemp":     np.round(oil_temp, 1),
-            "BrakePadFrontMM":      np.round(brake_front + rng.normal(0, 0.02, n_sec), 2),
-            "BrakePadRearMM":       np.round(brake_rear  + rng.normal(0, 0.02, n_sec), 2),
-            "BrakeFluidPct":        np.round(brake_fluid + rng.normal(0, 0.05, n_sec), 1),
-            # HV battery (NaN for pure ICE)
-            "BMSPackVol":           np.round(hv_pack_v, 1),
-            "BMSPackCrnt":          np.round(hv_pack_a, 2),
-            "BMSPackSOC":           np.round(hv_soc_arr, 1),
-            "BMSPackSOH":           np.round(hv_soh_arr, 1),
-            "BMSCellMaxVol":        np.round(hv_cell_max, 4),
-            "BMSCellMinVol":        np.round(hv_cell_min, 4),
-            "BMSCellMaxTemp":       np.round(hv_temp_arr, 1),
-            "BMSCellMinTemp":       np.round(
-                np.where(np.isnan(hv_temp_arr), np.nan,
-                         hv_temp_arr - 3 + rng.normal(0, 0.5, n_sec)), 1
-            ),
-            "SOCValid":             np.where(np.isnan(hv_soc_arr), np.nan, 0),
-            # Tyres
-            "TyrePressureFL":       np.round(tyre_fl, 1),
-            "TyrePressureFR":       np.round(tyre_fr, 1),
-            "TyrePressureRL":       np.round(tyre_rl, 1),
-            "TyrePressureRR":       np.round(tyre_rr, 1),
-            "TyreTempFL":           np.round(tyre_temp + rng.normal(0, 1, n_sec), 1),
-            "TyreTempFR":           np.round(tyre_temp + rng.normal(0, 1, n_sec), 1),
-            "TyreTempRL":           np.round(tyre_temp + rng.normal(0, 1, n_sec), 1),
-            "TyreTempRR":           np.round(tyre_temp + rng.normal(0, 1, n_sec), 1),
-            # GNSS
-            "GNSSLat":              np.round(lat_walk, 6),
-            "GNSSLong":             np.round(long_walk, 6),
-            "GNSSAlt":              np.round(
-                10 + np.cumsum(rng.normal(0, DRIVER_ARCHETYPES.get(driver_profile, {}).get("elevation_change_m_per_km", 0) * 0.01 + 0.3, n_sec)),
-            1),
-            "GNSSHead":             np.round(gnss_head, 1),
-            "GNSSSats":             gnss_sats,
-            # Failure labels for ML training
-            "_failure_type":        fail_label,
-            "_failure_intensity":   fail_intensity,
-        })
+        # ── EV / PHEV HV battery ────────────────────────────────────────────
+        hv_pack_v     = np.full(n_sec, np.nan)
+        hv_pack_a     = np.full(n_sec, np.nan)
+        hv_soc_arr    = np.full(n_sec, np.nan)
+        hv_cell_max_v = np.full(n_sec, np.nan)
+        hv_cell_min_v = np.full(n_sec, np.nan)
+        hv_cell_max_t = np.full(n_sec, np.nan)
+        hv_cell_min_t = np.full(n_sec, np.nan)
+        hvdcdc_temp   = np.full(n_sec, np.nan)
+        bms_cmu_fault = np.full(n_sec, np.nan)
+        bms_cv_fault  = np.full(n_sec, np.nan)
+        bms_pt_fault  = np.full(n_sec, np.nan)
+        bms_status    = np.full(n_sec, np.nan)
+        motor_inv_t   = np.full(n_sec, np.nan)
+        motor_str_t   = np.full(n_sec, np.nan)
+        gun_connected = np.full(n_sec, np.nan)
+        is_charging   = np.full(n_sec, np.nan)
+        dc_or_ac      = np.full(n_sec, np.nan, dtype=object)
+        used_kwh_arr  = np.full(n_sec, np.nan)
+        mileage_arr   = np.full(n_sec, np.nan)
+        ev_range_arr  = np.full(n_sec, np.nan)
+        bms_hvil      = np.full(n_sec, np.nan)
+        ept_ready     = np.full(n_sec, np.nan)
 
+        charged_this_session = False
+
+        if is_ev and bat_kwh and soc_pct is not None:
+            v_ms      = speed / 3.6
+            power_kw  = 0.10 * speed + 0.03 * np.abs(accel_x) * v_ms / 100 + ac_scalar * 1.5
+            regen_kw  = np.where(dspeed < -0.5, np.abs(dspeed) * v_ms * 0.8 * _REGEN_FRAC, 0.0)
+            net_e_kws = power_kw - regen_kw  # kWh/s net energy use
+
+            # Vectorised SOC: cumulative energy draw scaled by dt (seconds per step)
+            soc_draw = np.cumsum(net_e_kws * dt / bat_kwh * 100)
+            soc_run  = np.clip(soc_pct - soc_draw, 0, 100)
+            soc_pct  = float(soc_run[-1])
+
+            if soc_pct < 20:
+                charge_cycles        += 1
+                soc_pct               = min(90.0, soc_pct + 50.0)
+                km_since_charge       = 0.0
+                used_kwh_since_charge = 0.0
+                charged_this_session  = True
+
+            hv_soc_arr = soc_run
+
+            # Cell voltage model
+            cell_v  = 3.3 + soc_run / 100 * 0.9
+            hv_flt  = fail_ctx.get("hv_battery_degradation", 0.0)
+            spread  = 0.02 + hv_flt * 0.60
+            hv_cell_max_v = np.clip(cell_v + spread / 2 + rng.normal(0, 0.003, n_sec), 3.0, 4.25)
+            hv_cell_min_v = np.clip(cell_v - spread / 2 + rng.normal(0, 0.003, n_sec), 2.8, 4.20)
+
+            # Pack voltage and current — SoH-aware
+            nom_v   = 400 if bat_kwh > 30 else 200
+            hv_flt_for_soh = fail_ctx.get("hv_battery_degradation", 0.0)
+            soh_factor = 1.0 - hv_flt_for_soh * 0.25  # up to 25% capacity loss at max fault
+            hv_pack_v = nom_v * soh_factor * (soc_run / 100 * 0.15 + 0.85) + rng.normal(0, 1, n_sec)
+            # During charging (after SOC bump): inject negative current as proper charging session
+            if charged_this_session:
+                charge_start = max(0, n_sec - min(n_sec, 1800))  # last 30 min of session
+                charge_a     = -(bat_kwh * 1000 / hv_pack_v[charge_start:].mean()) * 0.5  # 0.5C charge
+                hv_pack_a    = np.where(
+                    np.arange(n_sec) >= charge_start,
+                    np.clip(charge_a + rng.normal(0, 2, n_sec), -300, 0),
+                    np.clip(power_kw * 1000 / (hv_pack_v + 1e-6), -50, 500),
+                )
+            else:
+                hv_pack_a = np.clip(power_kw * 1000 / (hv_pack_v + 1e-6), -50, 500)
+
+            # Cell temperature: scales with power / capacity
+            cell_t_mean   = np.clip(25 + power_kw / bat_kwh * 8 + rng.normal(0, 0.5, n_sec), -10, 55)
+            hv_cell_max_t = np.clip(cell_t_mean + 2 + rng.normal(0, 0.3, n_sec), -10, 60)
+            hv_cell_min_t = np.clip(cell_t_mean - 2 + rng.normal(0, 0.3, n_sec), -10, 55)
+
+            # DCDC converter temperature
+            hvdcdc_temp = np.clip(
+                40 + power_kw / bat_kwh * 6 + rng.normal(0, 1, n_sec),
+                -10, 80
+            )
+
+            # BMS fault levels: 0=None, 1=L1, 2=L2, 3=L3
+            bms_cmu_fault = np.full(n_sec, (
+                3 if hv_flt > 0.90 else 2 if hv_flt > 0.70 else 1 if hv_flt > 0.50 else 0
+            ), dtype=int)
+            bms_cv_fault = np.full(n_sec, (
+                2 if hv_flt > 0.85 else 1 if hv_flt > 0.60 else 0
+            ), dtype=int)
+            bms_pt_fault = np.where(
+                hv_cell_max_t > 50, 2, np.where(hv_cell_max_t > 45, 1, 0)
+            ).astype(int)
+
+            # BMS state: 3=Drive, 0=Off
+            bms_status = np.where(pwr_mod == 0, 0, 3).astype(int)
+
+            # Motor temperatures (scale with power demand)
+            motor_inv_t = np.clip(35 + power_kw / bat_kwh * 15 + rng.normal(0, 1, n_sec), -10, 120)
+            motor_str_t = np.clip(40 + power_kw / bat_kwh * 12 + rng.normal(0, 1, n_sec), -10, 150)
+
+            # Charging signals (in this session: not charging, this is a driving session)
+            gun_connected = np.zeros(n_sec, dtype=int)
+            is_charging   = np.zeros(n_sec, dtype=int)
+            dc_or_ac      = np.full(n_sec, "", dtype=object)
+
+            # Cumulative energy / distance since last charge (scaled by dt)
+            cum_kwh  = used_kwh_since_charge + np.cumsum(np.maximum(0, net_e_kws * dt))
+            cum_km   = km_since_charge        + np.cumsum(speed / 3600 * dt)
+            used_kwh_arr = np.maximum(0, cum_kwh)
+            mileage_arr  = np.maximum(0, cum_km)
+
+            # Update persistent state for next session
+            if not charged_this_session:
+                km_since_charge       = float(cum_km[-1])
+                used_kwh_since_charge = float(cum_kwh[-1])
+
+            # EV range: SOC × total range / 100
+            base_range     = bat_kwh / _EV_EFFICIENCY_KWHKM
+            ev_range_arr   = np.maximum(0, soc_run / 100 * base_range)
+
+            bms_hvil  = np.where(pwr_mod > 0, 1, 0).astype(int)
+            ept_ready = np.where(pwr_mod > 0, 1, 0).astype(int)
+
+        # ── Assemble common columns ────────────────────────────────────────
+        common = {
+            "VIN":                        vin,
+            "StartTime-TimeStamp":        unix_ts,
+            "StartTime-Date":             dates,
+            "vehSpeed":                   np.round(speed, 1),
+            "vehSysPwrMod":               pwr_mod,
+            "vehGearPos":                 gear,
+            "vehSteeringAngle":           np.round(steering, 1),
+            "vehBrakePos":                np.round(brake_pos, 1),
+            "vehAccelPos":                np.round(accel_pos, 1),
+            "tboxAccelX":                 np.round(accel_x, 3),
+            "tboxAccelY":                 np.round(accel_y, 3),
+            "tboxAccelZ":                 np.round(accel_z, 3),
+            "vehBatt":                    np.round(batt_v_arr, 2),
+            "vehOdo":                     np.round(odo_arr, 2),
+            "vehCoolantTemp":             np.round(coolant_temp, 1),
+            "vehOutsideTemp":             np.round(out_temp + rng.normal(0, 0.3, n_sec), 1),
+            "vehInsideTemp":              np.round(inside_temp, 1),
+            "vehAC":                      ac_on_arr,
+            "vehACFanSpeed":              ac_fan_arr,
+            "vehSideLight":               side_light,
+            "vehDipLight":                dip_light,
+            "vehMainLight":               main_light,
+            "vehRainDetected":            rain_arr,
+            "vehNightDetected":           night_det,
+            "vehHorn":                    np.zeros(n_sec, dtype=int),
+            "vehSeatBeltDrv":             np.ones(n_sec, dtype=int),
+            "vehBrkFludLvlLow":           brkflud_warn,
+            "vehABSF":                    abs_fault,
+            "frontLeftTyrePressure":      np.round(tyre_fl, 1),
+            "frontRrightTyrePressure":    np.round(tyre_fr, 1),
+            "rearLeftTyrePressure":       np.round(tyre_rl, 1),
+            "rearRightTyrePressure":      np.round(tyre_rr, 1),
+            "wheelTyreMonitorStatus":     tpms_status,
+            "gnssLat":                    np.round(lat_walk, 6),
+            "gnssLong":                   np.round(long_walk, 6),
+            "gnssAlt":                    np.round(gnss_alt, 1),
+            "gnssHead":                   np.round(gnss_head, 1),
+            "gnssSats":                   gnss_sats,
+            "_failure_type":              fail_label,
+            "_failure_intensity":         fail_intensity,
+        }
+
+        is_phev = fuel_type == "PHEV"
+
+        if not is_ev or is_phev:
+            # ICE or PHEV: include engine channels (vehRPM, FuelTankLevel, oil warnings)
+            common.update({
+                "vehRPM":                 np.round(rpm).astype(int),
+                "FuelTankLevel":          np.round(np.full(n_sec, fuel_pct), 1),
+                "vehFuelConsumed":        np.round(np.cumsum(fuel_rate_l_s), 4),
+                "vehOilPressureWarning":  oil_press_warn,
+                "vehMILWarning":          mil_warn,
+            })
+
+        if is_ev:
+            # EV or PHEV: include BMS channels (19-22) — pure EV has no engine signals
+            common.update({
+                "vehBMSBscSta":                 bms_status,
+                "vehBMSPackVol":                np.round(hv_pack_v, 1),
+                "vehBMSPackCrnt":               np.round(hv_pack_a, 2),
+                "vehBMSPackSOC":                np.round(hv_soc_arr, 1),
+                "vehBMSPackSOCV":               np.zeros(n_sec, dtype=int),
+                "vehBMSCellMaxVol":             np.round(hv_cell_max_v, 4),
+                "vehBMSCellMinVol":             np.round(hv_cell_min_v, 4),
+                "vehBMSCellMaxTem":             np.round(hv_cell_max_t, 1),
+                "vehBMSCellMinTem":             np.round(hv_cell_min_t, 1),
+                "vehHVDCDCTem":                 np.round(hvdcdc_temp, 1),
+                "vehBMSCMUFlt":                 bms_cmu_fault,
+                "vehBMSCellVoltFlt":            bms_cv_fault,
+                "vehBMSPackTemFlt":             bms_pt_fault,
+                "vehBMSHVILClsd":               bms_hvil,
+                "chargingGunIsConnected":       gun_connected,
+                "vehIsCharging":                is_charging,
+                "dcOrAC":                       dc_or_ac,
+                "usedBatterySinceLastCharge":   np.round(used_kwh_arr, 3),
+                "mileageSinceLastCharge":       np.round(mileage_arr, 2),
+                "vehElecRange":                 np.round(ev_range_arr, 0),
+                "vehTMInvtrTem":                np.round(motor_inv_t, 1),
+                "vehTMSttrTem":                 np.round(motor_str_t, 1),
+                "vehEPTRdy":                    ept_ready,
+            })
+
+        frame = pd.DataFrame(common)
         last_batt_12v = float(batt_v_arr[-1])
-        return frame, odometer, soc_pct, fuel_l, last_batt_12v, charge_cycles, soh_pct
+        return frame, odometer, soc_pct, fuel_l, last_batt_12v, charge_cycles, km_since_charge, used_kwh_since_charge
 
 
 # ── Speed profile generator ──────────────────────────────────────────────────
@@ -513,7 +675,7 @@ def _gen_speed_profile(n: int, profile: str, rng: np.random.Generator) -> np.nda
     """Smooth physically realistic speed trace using Gaussian filter."""
     from scipy.ndimage import gaussian_filter1d
 
-    p     = _PROFILE[profile]
+    p     = _PROFILE.get(profile, _PROFILE["normal"])
     max_s = p["max_speed"]
     bands = p["target_bands"]
 
