@@ -1,6 +1,6 @@
 # AutoPredict — Automotive Predictive Maintenance Platform
 
-> AI-powered vehicle health monitoring, fault prediction, and service orchestration for MG Motor India fleet operations.
+> AI-powered vehicle health monitoring, fault prediction, and service orchestration.
 
 ---
 
@@ -8,7 +8,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           MG Motor India Fleet                               │
+│                                                     │
 │   [Vehicle TBox] ──MQTT──► [Kafka Topic: tbox.telemetry]                    │
 │   [CSV Upload]  ──HTTP──►  [FastAPI Upload API]                              │
 │   [Synthetic]   ──Script►  [CSV → InfluxDB + PostgreSQL]                    │
@@ -69,7 +69,7 @@
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/mg-motor/autopredict.git
+git clone https://github.com/autopredict.git
 cd autopredict
 cp .env.example .env
 # Edit .env — set SECRET_KEY, GEMINI_API_KEY (for agent), and optionals
@@ -134,7 +134,7 @@ Broker default: localhost:1883
 The API server auto-subscribes on startup via `ingestion/tbox_receiver.py`. Configure the broker in `.env`:
 
 ```env
-MQTT_BROKER_HOST=mqtt.mg-motor.in
+MQTT_BROKER_HOST=mqtt.-motor.in
 MQTT_BROKER_PORT=1883
 MQTT_USERNAME=tbox_ingest
 MQTT_PASSWORD=<secret>
@@ -515,6 +515,4 @@ make clean       # remove __pycache__, .pytest_cache, *.pyc
 
 ---
 
-## License
-
-Proprietary — MG Motor India. All rights reserved.
+## License.
