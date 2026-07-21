@@ -31,6 +31,7 @@ DATA_DIR = pathlib.Path(os.getenv("DATA_DIR", "data/synthetic"))
 _PARTS_META: dict[str, dict] = {
     "OIL-5W30-4L": {
         "description":      "Engine Oil 5W-30 (4L)",
+        "category":         "Engine",
         "unit_cost_inr":    855.0,
         "lead_time_days":   2,
         "abc_class":        "A",
@@ -42,6 +43,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "OIL-FILTER-MG": {
         "description":      "Oil Filter — OEM",
+        "category":         "Engine",
         "unit_cost_inr":    183.0,
         "lead_time_days":   3,
         "abc_class":        "A",
@@ -53,6 +55,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "BR-PAD-F-MG": {
         "description":      "Brake Pads (Front) — OEM",
+        "category":         "Brakes",
         "unit_cost_inr":    2800.0,
         "lead_time_days":   5,
         "abc_class":        "A",
@@ -64,6 +67,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "BR-PAD-R-MG": {
         "description":      "Brake Pads (Rear) — OEM",
+        "category":         "Brakes",
         "unit_cost_inr":    2200.0,
         "lead_time_days":   5,
         "abc_class":        "A",
@@ -75,6 +79,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "BR-FLUID-DOT4": {
         "description":      "Brake Fluid DOT 4 (500ml)",
+        "category":         "Brakes",
         "unit_cost_inr":    380.0,
         "lead_time_days":   3,
         "abc_class":        "B",
@@ -86,6 +91,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "TYRE-215-60-17": {
         "description":      "Tyre 215/60 R17",
+        "category":         "Tyres",
         "unit_cost_inr":    6500.0,
         "lead_time_days":   7,
         "abc_class":        "B",
@@ -97,6 +103,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "TYRE-225-55-18": {
         "description":      "Tyre 225/55 R18",
+        "category":         "Tyres",
         "unit_cost_inr":    7800.0,
         "lead_time_days":   7,
         "abc_class":        "B",
@@ -108,6 +115,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "BATT-12V-60AH": {
         "description":      "12V Battery 60Ah",
+        "category":         "Battery 12V",
         "unit_cost_inr":    4500.0,
         "lead_time_days":   3,
         "abc_class":        "A",
@@ -119,6 +127,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "BATT-12V-70AH": {
         "description":      "12V Battery 70Ah",
+        "category":         "Battery 12V",
         "unit_cost_inr":    5200.0,
         "lead_time_days":   3,
         "abc_class":        "A",
@@ -130,6 +139,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "COOLANT-1L": {
         "description":      "Engine Coolant (1L)",
+        "category":         "Engine",
         "unit_cost_inr":    350.0,
         "lead_time_days":   3,
         "abc_class":        "B",
@@ -141,6 +151,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "AIR-FILTER-MG": {
         "description":      "Air Filter — OEM",
+        "category":         "Engine",
         "unit_cost_inr":    420.0,
         "lead_time_days":   3,
         "abc_class":        "B",
@@ -152,6 +163,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "SPARK-PLUG-NGK": {
         "description":      "Spark Plugs — NGK (set of 4)",
+        "category":         "Engine",
         "unit_cost_inr":    1850.0,
         "lead_time_days":   5,
         "abc_class":        "B",
@@ -163,6 +175,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "HV-MODULE-MG": {
         "description":      "HV Battery Module — EV OEM",
+        "category":         "EV / HV Battery",
         "unit_cost_inr":    185000.0,
         "lead_time_days":   21,
         "abc_class":        "A",
@@ -174,6 +187,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "BMS-FUSE-MG": {
         "description":      "BMS Fuse Assembly — MG",
+        "category":         "EV / HV Battery",
         "unit_cost_inr":    2800.0,
         "lead_time_days":   14,
         "abc_class":        "B",
@@ -185,6 +199,7 @@ _PARTS_META: dict[str, dict] = {
     },
     "THERMOSTAT-MG": {
         "description":      "Engine Thermostat — OEM",
+        "category":         "Engine",
         "unit_cost_inr":    1200.0,
         "lead_time_days":   10,
         "abc_class":        "C",
@@ -241,7 +256,26 @@ def _compute_demand_forecast(dealer_code: str) -> list[dict]:
             dealer_fleet = fleet_df[mask]
             n_vehicles = max(1, len(dealer_fleet))
 
-    avg_km_per_month = 1500  # typical monthly mileage
+    # Compute actual avg monthly km from trip data for this dealer's fleet
+    avg_km_per_month = 1500.0  # fallback if no trip data
+    trips_csv = DATA_DIR / "trips.csv"
+    if trips_csv.exists() and not fleet_df.empty:
+        try:
+            t = pd.read_csv(trips_csv, usecols=["vin", "odometer", "startTime"], low_memory=False)
+            dc_col_f = next((c for c in ["dealer_code", "DealerCode"] if c in fleet_df.columns), None)
+            if dc_col_f and "vin" in fleet_df.columns:
+                dealer_vins = set(fleet_df[fleet_df[dc_col_f].astype(str) == dealer_code]["vin"].astype(str))
+                t_d = t[t["vin"].astype(str).isin(dealer_vins)]
+                if not t_d.empty:
+                    t_d = t_d.copy()
+                    t_d["startTime"] = pd.to_datetime(t_d["startTime"], errors="coerce", utc=True)
+                    t_d = t_d.dropna(subset=["startTime"])
+                    if not t_d.empty:
+                        span_months = max(1.0, (t_d["startTime"].max() - t_d["startTime"].min()).days / 30)
+                        total_km_per_vin = t_d.groupby("vin")["odometer"].sum()
+                        avg_km_per_month = float(total_km_per_vin.mean() / span_months)
+        except Exception:
+            pass
 
     # --- Load service history --------------------------------------------------
     svc_csv = DATA_DIR / "service_history.csv"
