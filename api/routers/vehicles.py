@@ -151,11 +151,18 @@ def _load_service_history() -> pd.DataFrame:
 
 
 def _load_telemetry(vin: str, minutes: int = 60) -> list[dict]:
+    import math
     for pattern in [f"telemetry_{vin}.csv", f"{vin}_telemetry.csv"]:
         csv = DATA_DIR / pattern
         if csv.exists():
             df = pd.read_csv(csv, nrows=500)
-            return df.to_dict("records")
+            rows = df.to_dict("records")
+            # Sanitise non-JSON-compliant floats (NaN / ±Inf) → None
+            return [
+                {k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+                 for k, v in row.items()}
+                for row in rows
+            ]
     return []
 
 

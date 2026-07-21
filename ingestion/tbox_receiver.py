@@ -188,7 +188,9 @@ class TBoxMQTTReceiver:
         password = os.getenv("MQTT_PASSWORD")
         if username:
             self._client.username_pw_set(username, password)
-        self._client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+        # connect_async starts the TCP handshake without blocking; loop_start
+        # drives the socket so the on_connect callback fires when ready.
+        self._client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
 
         thread = threading.Thread(target=self._client.loop_forever, daemon=True)
         thread.start()
