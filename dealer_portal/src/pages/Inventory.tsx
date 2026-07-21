@@ -770,8 +770,12 @@ function DemandForecastTab() {
   const { data: raw = [], isLoading } = useDemandForecast(dealerCode)
   const { data: breakdown } = useDemandBreakdown(dealerCode)
   const parts = raw as any[]
-  const byRegion: any[] = breakdown?.by_region ?? []
-  const byDealer: any[] = breakdown?.by_dealer ?? []
+  const byRegion: Record<string, any>   = breakdown?.by_region  ?? {}
+  const byDealer: Record<string, any>   = breakdown?.by_dealer  ?? {}
+  const partMeta: Record<string, any>   = breakdown?.part_meta  ?? {}
+  const partCodes: string[]             = breakdown?.part_codes ?? []
+
+  const [breakdownView, setBreakdownView] = useState<'region' | 'dealer'>('region')
 
   const [horizon, setHorizon] = useState<Horizon>(30)
   const [filterCat, setFilterCat] = useState<string>('All')
@@ -976,82 +980,178 @@ function DemandForecastTab() {
         </div>
       </div>
 
-      {/* ── Demand by Region ── */}
-      {byRegion.length > 0 && (
+      {/* ── Per-Part Demand by Region / Dealer pivot ── */}
+      {partCodes.length > 0 && (
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-gray-800 mb-1">Demand by Region</h3>
-          <p className="text-xs text-gray-400 mb-4">Total units needed across all parts, proportional to each region's fleet size</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-gray-200 text-gray-500 text-[11px] uppercase tracking-wide">
-                  <th className="px-3 pb-2 font-medium">Region</th>
-                  <th className="px-3 pb-2 font-medium">Fleet</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 7  ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>7D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 15 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>15D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 30 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>30D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 60 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>60D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 90 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>90D</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {byRegion.map((r: any) => (
-                  <tr key={r.region} className="hover:bg-gray-50">
-                    <td className="px-3 py-2.5 font-semibold text-gray-800">{r.region}</td>
-                    <td className="px-3 py-2.5 text-gray-500">{r.fleet_count} vehicles</td>
-                    {([7,15,30,60,90] as const).map(h => (
-                      <td key={h} className={`px-3 py-2.5 tabular-nums font-medium ${horizon === h ? 'text-blue-700 bg-blue-50' : 'text-gray-700'}`}>
-                        {r[`demand_${h}d`] ?? '—'}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Header + view toggle */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">
+                Demand by {breakdownView === 'region' ? 'Region' : 'Dealer'} — per Part
+              </h3>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {breakdownView === 'region'
+                  ? 'Units needed per region for the selected horizon'
+                  : 'Units needed per dealer for the selected horizon'}
+              </p>
+            </div>
+            <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+              {(['region', 'dealer'] as const).map(v => (
+                <button key={v} onClick={() => setBreakdownView(v)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    breakdownView === v ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}>
+                  {v === 'region' ? 'By Region' : 'By Dealer'}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
 
-      {/* ── Demand by Dealer ── */}
-      {byDealer.length > 0 && (
-        <div className="card p-5">
-          <h3 className="text-sm font-semibold text-gray-800 mb-1">Demand by Dealer</h3>
-          <p className="text-xs text-gray-400 mb-4">Estimated parts demand per dealer for the selected horizon</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-gray-200 text-gray-500 text-[11px] uppercase tracking-wide">
-                  <th className="px-3 pb-2 font-medium">Dealer</th>
-                  <th className="px-3 pb-2 font-medium">City</th>
-                  <th className="px-3 pb-2 font-medium">Region</th>
-                  <th className="px-3 pb-2 font-medium">Fleet</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 7  ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>7D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 15 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>15D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 30 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>30D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 60 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>60D</th>
-                  <th className={`px-3 pb-2 font-medium ${horizon === 90 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>90D</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {byDealer.map((d: any) => (
-                  <tr key={d.dealer_code} className={`hover:bg-gray-50 ${d.dealer_code === dealerCode ? 'bg-blue-50 font-semibold' : ''}`}>
-                    <td className="px-3 py-2.5 text-gray-800">
-                      {d.dealer_code}
-                      {d.dealer_code === dealerCode && <span className="ml-1.5 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full">You</span>}
-                    </td>
-                    <td className="px-3 py-2.5 text-gray-500">{d.city}</td>
-                    <td className="px-3 py-2.5 text-gray-500">{d.region}</td>
-                    <td className="px-3 py-2.5 text-gray-500">{d.fleet_count}</td>
-                    {([7,15,30,60,90] as const).map(h => (
-                      <td key={h} className={`px-3 py-2.5 tabular-nums ${horizon === h ? 'text-blue-700 bg-blue-50' : 'text-gray-700'}`}>
-                        {d[`demand_${h}d`] ?? '—'}
+          {breakdownView === 'region' && (() => {
+            const regions = Object.keys(byRegion).sort()
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-[11px] uppercase tracking-wide text-gray-500">
+                      <th className="px-3 pb-2 font-medium sticky left-0 bg-white">Part</th>
+                      <th className="px-3 pb-2 font-medium">Category</th>
+                      {regions.map(r => (
+                        <th key={r} className="px-3 pb-2 font-medium text-right min-w-[90px]">
+                          {r}
+                          <span className="block text-gray-400 font-normal normal-case tracking-normal">
+                            {byRegion[r]?.fleet_count} veh
+                          </span>
+                        </th>
+                      ))}
+                      <th className="px-3 pb-2 font-medium text-right bg-gray-50">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {partCodes.map(code => {
+                      const meta = partMeta[code] ?? {}
+                      const dk = `demand_${horizon}d`
+                      const vals = regions.map(r => byRegion[r]?.parts?.[code]?.[dk] ?? 0)
+                      const total = vals.reduce((s: number, v: number) => s + v, 0)
+                      if (total === 0) return null
+                      return (
+                        <tr key={code} className="hover:bg-gray-50">
+                          <td className="px-3 py-2.5 font-medium text-gray-800 sticky left-0 bg-white max-w-[180px]">
+                            <div className="truncate">{meta.description ?? code}</div>
+                            <div className="text-[10px] text-gray-400 font-normal">{code}</div>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                              style={{ background: (CATEG_COLORS[meta.category] ?? '#6b7280') + '22',
+                                       color:      CATEG_COLORS[meta.category] ?? '#6b7280' }}>
+                              {meta.category}
+                            </span>
+                          </td>
+                          {vals.map((v: number, i: number) => (
+                            <td key={regions[i]} className="px-3 py-2.5 text-right tabular-nums text-gray-700">
+                              {v > 0 ? v : <span className="text-gray-300">—</span>}
+                            </td>
+                          ))}
+                          <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-gray-900 bg-gray-50">{total}</td>
+                        </tr>
+                      )
+                    })}
+                    {/* Totals row */}
+                    <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
+                      <td className="px-3 py-2.5 text-gray-700 sticky left-0 bg-gray-50">All Parts</td>
+                      <td className="px-3 py-2.5" />
+                      {regions.map(r => {
+                        const tot = partCodes.reduce((s, c) => s + (byRegion[r]?.parts?.[c]?.[`demand_${horizon}d`] ?? 0), 0)
+                        return <td key={r} className="px-3 py-2.5 text-right tabular-nums text-blue-700">{tot}</td>
+                      })}
+                      <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">
+                        {regions.reduce((s, r) => s + partCodes.reduce((ss, c) => ss + (byRegion[r]?.parts?.[c]?.[`demand_${horizon}d`] ?? 0), 0), 0)}
                       </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )
+          })()}
+
+          {breakdownView === 'dealer' && (() => {
+            const dealers = Object.entries(byDealer).sort((a, b) => b[1].fleet_count - a[1].fleet_count)
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-[11px] uppercase tracking-wide text-gray-500">
+                      <th className="px-3 pb-2 font-medium sticky left-0 bg-white">Part</th>
+                      <th className="px-3 pb-2 font-medium">Cat</th>
+                      {dealers.map(([dc, info]) => (
+                        <th key={dc} className={`px-3 pb-2 font-medium text-right min-w-[80px] ${dc === dealerCode ? 'text-blue-700' : ''}`}>
+                          {dc}
+                          <span className="block text-gray-400 font-normal normal-case tracking-normal">
+                            {info.city?.split(' ')[0]}
+                          </span>
+                          <span className="block text-gray-400 font-normal normal-case">
+                            {info.fleet_count} veh
+                          </span>
+                        </th>
+                      ))}
+                      <th className="px-3 pb-2 font-medium text-right bg-gray-50">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {partCodes.map(code => {
+                      const meta = partMeta[code] ?? {}
+                      const dk   = `demand_${horizon}d`
+                      const vals = dealers.map(([dc]) => byDealer[dc]?.parts?.[code]?.[dk] ?? 0)
+                      const total = vals.reduce((s: number, v: number) => s + v, 0)
+                      if (total === 0) return null
+                      return (
+                        <tr key={code} className="hover:bg-gray-50">
+                          <td className="px-3 py-2.5 font-medium text-gray-800 sticky left-0 bg-white max-w-[170px]">
+                            <div className="truncate">{meta.description ?? code}</div>
+                            <div className="text-[10px] text-gray-400 font-normal">{code}</div>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                              style={{ background: (CATEG_COLORS[meta.category] ?? '#6b7280') + '22',
+                                       color:      CATEG_COLORS[meta.category] ?? '#6b7280' }}>
+                              {meta.category?.split(' ')[0]}
+                            </span>
+                          </td>
+                          {vals.map((v: number, i: number) => {
+                            const [dc] = dealers[i]
+                            return (
+                              <td key={dc} className={`px-3 py-2.5 text-right tabular-nums ${
+                                dc === dealerCode ? 'text-blue-700 font-semibold bg-blue-50' : 'text-gray-700'
+                              }`}>
+                                {v > 0 ? v : <span className="text-gray-300">—</span>}
+                              </td>
+                            )
+                          })}
+                          <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-gray-900 bg-gray-50">{total}</td>
+                        </tr>
+                      )
+                    })}
+                    {/* Totals row */}
+                    <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
+                      <td className="px-3 py-2.5 text-gray-700 sticky left-0 bg-gray-50">All Parts</td>
+                      <td className="px-3 py-2.5" />
+                      {dealers.map(([dc]) => {
+                        const tot = partCodes.reduce((s, c) => s + (byDealer[dc]?.parts?.[c]?.[`demand_${horizon}d`] ?? 0), 0)
+                        return (
+                          <td key={dc} className={`px-3 py-2.5 text-right tabular-nums ${dc === dealerCode ? 'text-blue-700' : 'text-gray-700'}`}>
+                            {tot}
+                          </td>
+                        )
+                      })}
+                      <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">
+                        {dealers.reduce((s, [dc]) => s + partCodes.reduce((ss, c) => ss + (byDealer[dc]?.parts?.[c]?.[`demand_${horizon}d`] ?? 0), 0), 0)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
