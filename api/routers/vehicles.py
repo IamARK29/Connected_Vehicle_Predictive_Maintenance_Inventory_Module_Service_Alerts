@@ -67,6 +67,84 @@ def _safe(v: Any, default: Any = None) -> Any:
         return v
 
 
+def _derive_heat_soak_context(
+    vin: str,
+    supplied_park_hours: float | None,
+    supplied_is_sunny: bool | None,
+) -> tuple[float, bool]:
+    """Derive park_duration_hours and is_sunny from the last telemetry rows.
+
+    park_duration_hours — elapsed hours since the last vehSysPwrMod → 0 transition.
+    is_sunny            — True when all of: vehNightDetected=0 at last power-off,
+                          current clock hour is 09:00–17:00, and vehRainDetected=0.
+
+    Falls back to (0.0, False) on any error (safe defaults: no heat soak correction).
+    """
+    from datetime import datetime, timezone
+    import os
+
+    park_hours: float = supplied_park_hours if supplied_park_hours is not None else 0.0
+    sunny: bool       = supplied_is_sunny   if supplied_is_sunny   is not None else False
+
+    try:
+        import pandas as pd
+
+        data_dir = os.getenv("DATA_DIR", "data/synthetic")
+        tel_path = None
+        for name in (f"telemetry_{vin}.csv", f"{vin}_telemetry.csv"):
+            p = os.path.join(data_dir, name)
+            if os.path.exists(p):
+                tel_path = p
+                break
+        if tel_path is None:
+            return park_hours, sunny
+
+        # Read only the last 500 rows to keep this fast
+        df = pd.read_csv(tel_path, low_memory=False)
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True, errors="coerce")
+            df = df.sort_values("timestamp").tail(500)
+        else:
+            return park_hours, sunny
+
+        # ── Park duration ─────────────────────────────────────────────────────
+        if supplied_park_hours is None:
+            pwr_col = next(
+                (c for c in ("vehSysPwrMod", "VehSysPwrMod", "sys_pwr_mod") if c in df.columns),
+                None,
+            )
+            if pwr_col:
+                pwr = df[pwr_col].fillna(0)
+                # Last row where power was on followed by off
+                last_on_idx = df.index[pwr > 0]
+                if len(last_on_idx):
+                    last_on_ts = df.loc[last_on_idx[-1], "timestamp"]
+                    now_utc    = pd.Timestamp.now(tz="UTC")
+                    park_hours = max(0.0, (now_utc - last_on_ts).total_seconds() / 3600.0)
+
+        # ── Is sunny ──────────────────────────────────────────────────────────
+        if supplied_is_sunny is None:
+            last_row = df.iloc[-1]
+
+            night_col = next(
+                (c for c in ("vehNightDetected", "night_detected") if c in df.columns), None
+            )
+            rain_col = next(
+                (c for c in ("vehRainDetected", "rain_detected") if c in df.columns), None
+            )
+            was_night = bool(df[night_col].iloc[-1]) if night_col else False
+            was_raining = bool(df[rain_col].iloc[-1]) if rain_col else False
+
+            now_local_hour = datetime.now(timezone.utc).hour  # UTC hour as proxy; close enough for 09–17 India
+            daytime = 9 <= now_local_hour <= 17
+            sunny = daytime and not was_night and not was_raining
+
+    except Exception:
+        pass
+
+    return park_hours, sunny
+
+
 def _load_service_history() -> pd.DataFrame:
     p = DATA_DIR / "service_history.csv"
     return pd.read_csv(p) if p.exists() else pd.DataFrame()
@@ -134,6 +212,12 @@ def _compute_vehicle_health(vin: str, vehicle: dict, trips_df: pd.DataFrame) -> 
     if fuel_type in ("EV", "PHEV"):
         hv_health = round(max(50, 95 - odo / 20000 + float(rng.normal(0, 2))), 1)
         components["hv_battery"] = {"score": hv_health, "status": "critical" if hv_health < 75 else "warning" if hv_health < 85 else "ok"}
+
+        # HV battery is the dominant health signal for EVs — blend it into the overall score.
+        # The detailed EV subsystem breakdown (charging, motor, DCDC) lives in /api/ev/{vin}/health.
+        health = round(min(100, max(20,
+            health * 0.70 + hv_health * 0.30
+        )), 1)
 
     alert_count = sum(1 for c in components.values() if c["status"] in ("warning", "critical"))
 
@@ -503,18 +587,26 @@ async def get_alerts(
     health = _compute_vehicle_health(vin, vehicle, trips_df)
     alerts = []
 
+    _SEV_MAP = {"critical": "CRITICAL", "warning": "HIGH"}
+    _BASE_CONF = {"CRITICAL": 0.93, "HIGH": 0.80, "MEDIUM": 0.65}
     for comp_name, comp in health["components"].items():
         if comp["status"] in ("warning", "critical"):
-            sev = "HIGH" if comp["status"] == "critical" else "MEDIUM"
+            sev = _SEV_MAP.get(comp["status"], "MEDIUM")
             if severity and sev != severity.upper():
                 continue
-            base = 0.85 if sev == "HIGH" else 0.65
-            conf = round(min(0.95, max(0.42, base + (hash(vin + comp_name) % 100) / 1000.0)), 2)
+            base = _BASE_CONF.get(sev, 0.65)
+            conf = round(min(0.99, max(0.45, base + (hash(vin + comp_name) % 100) / 1000.0)), 2)
+            score = comp.get("score", 50)
+            title = (
+                f"{comp_name.replace('_', ' ').title()} — critical, immediate attention required"
+                if sev == "CRITICAL" else
+                f"{comp_name.replace('_', ' ').title()} — service recommended soon"
+            )
             alerts.append({
-                "alert_type": f"ML_{comp_name.upper()}_{'CRITICAL' if sev == 'HIGH' else 'WARNING'}",
+                "alert_type": f"ML_{comp_name.upper()}_{sev}",
                 "severity": sev,
-                "title": f"{comp_name.replace('_', ' ').title()} — {'immediate attention' if sev == 'HIGH' else 'service recommended'}",
-                "message_customer": f"Your vehicle's {comp_name.replace('_', ' ')} health is at {comp['score']}%.",
+                "title": title,
+                "message_customer": f"Vehicle's {comp_name.replace('_', ' ')} health is at {score}% — {sev.lower()} level.",
                 "confidence_score": conf,
                 "triggered_at": datetime.now(timezone.utc).isoformat(),
             })
@@ -569,3 +661,257 @@ async def get_trips(
         return []
 
     return trips[trips["vin"] == vin].tail(limit).to_dict("records")
+
+
+@router.get("/{vin}/range-estimate", summary="Real-time range estimate for EV/PHEV")
+async def get_range_estimate(
+    vin: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    soc_pct: float = Query(..., ge=0, le=100, description="Current state of charge (%)"),
+    outside_temp_c: float = Query(25.0, ge=-20, le=55, description="Ambient temperature (°C)"),
+    ac_is_on: bool = Query(False, description="Whether cabin AC is active"),
+    park_duration_hours: float | None = Query(
+        None, ge=0, le=72,
+        description=(
+            "Hours the vehicle has been parked since last power-off. "
+            "Auto-derived from telemetry when omitted."
+        ),
+    ),
+    is_sunny: bool | None = Query(
+        None,
+        description=(
+            "True if parked in direct sun (no shade). "
+            "Auto-derived from vehNightDetected + time-of-day + rain signal when omitted."
+        ),
+    ),
+):
+    vehicle = _get_vehicle(vin)
+    if not vehicle:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vin} not found")
+
+    fuel_type = str(vehicle.get("fuel_type", "")).upper()
+    if fuel_type not in ("EV", "PHEV", "BEV"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Range estimate is only available for EV/PHEV vehicles (this VIN is {fuel_type})",
+        )
+
+    # Pull feature store values from trips / fleet data as best-effort proxies
+    trips = _load_trips()
+    fs_features: dict[str, Any] = {}
+    if not trips.empty and "vin" in trips.columns:
+        vin_trips = trips[trips["vin"] == vin]
+        if not vin_trips.empty:
+            for col in ("composite_drive_score", "km_per_day_30d_avg"):
+                if col in vin_trips.columns:
+                    fs_features[col] = _safe(vin_trips[col].mean())
+
+    # Prefer live twin values when Redis is available
+    try:
+        from twin.vehicle_twin import TwinManager
+        twin = TwinManager().get(vin)
+        if twin:
+            if twin.hv_battery_soh_pct:
+                fs_features["soh_estimated"] = twin.hv_battery_soh_pct
+            if twin.composite_drive_score:
+                fs_features["composite_drive_score"] = twin.composite_drive_score
+            if twin.km_per_day_30d_avg:
+                fs_features["km_per_day_30d_avg"] = twin.km_per_day_30d_avg
+    except Exception:
+        pass
+
+    # ── Auto-derive heat soak inputs from recent telemetry when not supplied ──
+    if park_duration_hours is None or is_sunny is None:
+        park_duration_hours, is_sunny = _derive_heat_soak_context(
+            vin,
+            supplied_park_hours=park_duration_hours,
+            supplied_is_sunny=is_sunny,
+        )
+
+    from models.range_anxiety_model import RangeAnxietyPredictor
+    result = RangeAnxietyPredictor().predict(
+        vin=vin,
+        current_soc_pct=soc_pct,
+        current_outside_temp_c=outside_temp_c,
+        ac_is_on=ac_is_on,
+        feature_store_features=fs_features,
+        fleet_row=vehicle,
+        park_duration_hours=park_duration_hours,
+        is_sunny=is_sunny,
+    )
+
+    return {
+        "vin":                  vin,
+        "model_name":           vehicle.get("model_name", ""),
+        "rated_range_km":       _safe(vehicle.get("rated_range_km")),
+        "park_duration_hours":  round(park_duration_hours, 2),
+        "is_sunny":             is_sunny,
+        **result,
+    }
+
+
+@router.get("/{vin}/cost-report", summary="EV charging cost breakdown and petrol comparison")
+async def get_cost_report(
+    vin: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Returns EV charging cost features for the mobile 'my charging costs' dashboard.
+
+    Always returns HTTP 200. Non-EV vehicles receive a NONE response with a note.
+    Cost-per-km is compared against the petrol benchmark (₹100/L, 12 km/L = ₹8.33/km).
+    """
+    vehicle = _get_vehicle(vin)
+    if not vehicle:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vin} not found")
+
+    fuel_type = str(vehicle.get("fuel_type", "ICE")).upper()
+    if fuel_type not in ("EV", "PHEV", "BEV"):
+        from features.ev_cost_features import PETROL_COST_PER_KM_INR
+        return {
+            "vin":        vin,
+            "model_name": vehicle.get("model_name", ""),
+            "fuel_type":  fuel_type,
+            "features":   {},
+            "petrol_benchmark_inr_per_km": round(PETROL_COST_PER_KM_INR, 2),
+            "note": f"Cost report is for EV/PHEV vehicles only (this vehicle is {fuel_type})",
+        }
+
+    # ── Load telemetry and synthesise charge sessions ──────────────────────
+    telem_df: pd.DataFrame = pd.DataFrame()
+    for pattern in (f"telemetry_{vin}.csv", f"{vin}_telemetry.csv"):
+        csv_path = DATA_DIR / pattern
+        if csv_path.exists():
+            try:
+                df = pd.read_csv(csv_path)
+                telem_df = df.tail(1000)   # last ~83 h at 5-min cadence
+            except Exception:
+                pass
+            break
+
+    from api.routers.ev_health import _synthesise_charge_sessions
+    sessions_df = _synthesise_charge_sessions(telem_df) if not telem_df.empty else pd.DataFrame()
+
+    # Attach vin column so the engine can filter
+    if not sessions_df.empty and "vin" not in sessions_df.columns:
+        sessions_df["vin"] = vin
+
+    # ── Feature store and trip fallbacks ──────────────────────────────────
+    fs_features: dict[str, Any] = {}
+    try:
+        from features.feature_store import FeatureStore
+        store = FeatureStore()
+        for group in ("battery_hv", "driver"):
+            cached = store.get_online(vin, group) or {}
+            fs_features.update(cached)
+    except Exception:
+        pass
+
+    if "soh_estimated" not in fs_features or fs_features["soh_estimated"] is None:
+        try:
+            from twin.vehicle_twin import TwinManager
+            twin = TwinManager().get(vin)
+            if twin and twin.hv_battery_soh_pct:
+                fs_features["soh_estimated"] = twin.hv_battery_soh_pct
+        except Exception:
+            pass
+
+    if "km_per_day_30d_avg" not in fs_features:
+        trips = _load_trips()
+        if not trips.empty and "vin" in trips.columns and "distance_km" in trips.columns:
+            vin_trips = trips[trips["vin"] == vin]
+            if not vin_trips.empty:
+                fs_features["km_per_day_30d_avg"] = _safe(vin_trips["distance_km"].sum() / 30)
+
+    # ── Compute cost features ──────────────────────────────────────────────
+    from features.ev_cost_features import EVCostFeatureEngine, PETROL_COST_PER_KM_INR
+    cost_features = EVCostFeatureEngine().compute(sessions_df, vin, vehicle, fs_features)
+
+    # ── Build petrol comparison ────────────────────────────────────────────
+    cpm = cost_features.get("cost_per_km_inr")
+    if cpm is not None:
+        saving_vs_petrol_inr_per_km = round(PETROL_COST_PER_KM_INR - cpm, 2)
+        saving_pct = round((saving_vs_petrol_inr_per_km / PETROL_COST_PER_KM_INR) * 100, 1)
+    else:
+        saving_vs_petrol_inr_per_km = None
+        saving_pct = None
+
+    return {
+        "vin":                          vin,
+        "model_name":                   vehicle.get("model_name", ""),
+        "fuel_type":                    fuel_type,
+        "battery_capacity_kwh":         _safe(vehicle.get("battery_capacity_kwh")),
+        "features":                     cost_features,
+        "petrol_benchmark_inr_per_km":  round(PETROL_COST_PER_KM_INR, 2),
+        "saving_vs_petrol_inr_per_km":  saving_vs_petrol_inr_per_km,
+        "saving_vs_petrol_pct":         saving_pct,
+        "charge_sessions_used":         len(sessions_df),
+    }
+
+
+@router.get("/{vin}/thermal-status", summary="Thermal runaway risk assessment for EV/PHEV")
+async def get_thermal_status(
+    vin: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Returns the latest thermal runaway risk assessment for a vehicle.
+
+    Always returns HTTP 200 — risk_level will be "NONE" for non-EV vehicles and
+    when no BMS fault conditions are detected. The frontend uses risk_level to
+    render the appropriate badge (NONE/MEDIUM/HIGH/CRITICAL).
+
+    Results are persisted to ev_thermal_runaway_log for audit trail.
+    CRITICAL results trigger immediate SMS dispatch (no cooldown).
+    """
+    vehicle = _get_vehicle(vin)
+    if not vehicle:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vin} not found")
+
+    fuel_type = str(vehicle.get("fuel_type", "ICE")).upper()
+    if fuel_type not in ("EV", "PHEV", "BEV"):
+        return {
+            "vin":          vin,
+            "model_name":   vehicle.get("model_name", ""),
+            "fuel_type":    fuel_type,
+            "risk_level":   "NONE",
+            "factors":      [],
+            "action":       "monitor",
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "note":         f"Thermal runaway monitoring applies to EV/PHEV only (this vehicle is {fuel_type})",
+        }
+
+    # Load telemetry — last 48h when timestamps allow, else most-recent rows
+    telem_df: pd.DataFrame = pd.DataFrame()
+    for pattern in (f"telemetry_{vin}.csv", f"{vin}_telemetry.csv"):
+        csv_path = DATA_DIR / pattern
+        if csv_path.exists():
+            try:
+                df = pd.read_csv(csv_path)
+                ts_col = "StartTime-TimeStamp"
+                if ts_col in df.columns:
+                    cutoff = (datetime.now(timezone.utc).timestamp()) - 48 * 3600
+                    recent = df[df[ts_col] >= cutoff]
+                    telem_df = recent if not recent.empty else df.tail(500)
+                else:
+                    telem_df = df.tail(500)
+            except Exception:
+                pass
+            break
+
+    from models.thermal_runaway_model import ThermalRunawayEarlyWarner, persist_thermal_log, dispatch_critical_sms
+    result = ThermalRunawayEarlyWarner().classify(vin, telem_df, {})
+
+    # Persist every evaluation for audit trail (including NONE)
+    persist_thermal_log(result)
+
+    # CRITICAL: dispatch SMS immediately without cooldown
+    if result["risk_level"] == "CRITICAL":
+        dispatch_critical_sms(result)
+
+    return {
+        "model_name":           vehicle.get("model_name", ""),
+        "fuel_type":            fuel_type,
+        "battery_capacity_kwh": _safe(vehicle.get("battery_capacity_kwh")),
+        **result,
+    }
