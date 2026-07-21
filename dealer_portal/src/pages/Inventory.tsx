@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import {
   useInventoryOverview, useInventoryStock, useInventoryAlerts,
   useReorderPlan, useInventoryAnalytics, useDealerComparison,
-  usePartDetail, useInventoryTransactions, useDemandForecast,
+  usePartDetail, useInventoryTransactions, useDemandForecast, useDemandBreakdown,
 } from '../api/hooks'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -768,7 +768,10 @@ const CATEG_COLORS: Record<string, string> = {
 function DemandForecastTab() {
   const dealerCode = DEALER_CODE ?? 'DLR001'
   const { data: raw = [], isLoading } = useDemandForecast(dealerCode)
+  const { data: breakdown } = useDemandBreakdown(dealerCode)
   const parts = raw as any[]
+  const byRegion: any[] = breakdown?.by_region ?? []
+  const byDealer: any[] = breakdown?.by_dealer ?? []
 
   const [horizon, setHorizon] = useState<Horizon>(30)
   const [filterCat, setFilterCat] = useState<string>('All')
@@ -972,6 +975,85 @@ function DemandForecastTab() {
           </table>
         </div>
       </div>
+
+      {/* ── Demand by Region ── */}
+      {byRegion.length > 0 && (
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-gray-800 mb-1">Demand by Region</h3>
+          <p className="text-xs text-gray-400 mb-4">Total units needed across all parts, proportional to each region's fleet size</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="border-b border-gray-200 text-gray-500 text-[11px] uppercase tracking-wide">
+                  <th className="px-3 pb-2 font-medium">Region</th>
+                  <th className="px-3 pb-2 font-medium">Fleet</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 7  ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>7D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 15 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>15D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 30 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>30D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 60 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>60D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 90 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>90D</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {byRegion.map((r: any) => (
+                  <tr key={r.region} className="hover:bg-gray-50">
+                    <td className="px-3 py-2.5 font-semibold text-gray-800">{r.region}</td>
+                    <td className="px-3 py-2.5 text-gray-500">{r.fleet_count} vehicles</td>
+                    {([7,15,30,60,90] as const).map(h => (
+                      <td key={h} className={`px-3 py-2.5 tabular-nums font-medium ${horizon === h ? 'text-blue-700 bg-blue-50' : 'text-gray-700'}`}>
+                        {r[`demand_${h}d`] ?? '—'}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Demand by Dealer ── */}
+      {byDealer.length > 0 && (
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-gray-800 mb-1">Demand by Dealer</h3>
+          <p className="text-xs text-gray-400 mb-4">Estimated parts demand per dealer for the selected horizon</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="border-b border-gray-200 text-gray-500 text-[11px] uppercase tracking-wide">
+                  <th className="px-3 pb-2 font-medium">Dealer</th>
+                  <th className="px-3 pb-2 font-medium">City</th>
+                  <th className="px-3 pb-2 font-medium">Region</th>
+                  <th className="px-3 pb-2 font-medium">Fleet</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 7  ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>7D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 15 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>15D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 30 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>30D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 60 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>60D</th>
+                  <th className={`px-3 pb-2 font-medium ${horizon === 90 ? 'text-blue-700 bg-blue-50 rounded' : ''}`}>90D</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {byDealer.map((d: any) => (
+                  <tr key={d.dealer_code} className={`hover:bg-gray-50 ${d.dealer_code === dealerCode ? 'bg-blue-50 font-semibold' : ''}`}>
+                    <td className="px-3 py-2.5 text-gray-800">
+                      {d.dealer_code}
+                      {d.dealer_code === dealerCode && <span className="ml-1.5 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full">You</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-500">{d.city}</td>
+                    <td className="px-3 py-2.5 text-gray-500">{d.region}</td>
+                    <td className="px-3 py-2.5 text-gray-500">{d.fleet_count}</td>
+                    {([7,15,30,60,90] as const).map(h => (
+                      <td key={h} className={`px-3 py-2.5 tabular-nums ${horizon === h ? 'text-blue-700 bg-blue-50' : 'text-gray-700'}`}>
+                        {d[`demand_${h}d`] ?? '—'}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -438,6 +438,17 @@ def _compute_predictions(vin: str, vehicle: dict, health: dict, trips_df: pd.Dat
                 drv_raw["score_max"] = round(min(100, score_base + score_noise), 1)
                 drv_raw["score_std"] = round(score_noise * 0.6, 1)
                 drv_raw["data_source"] = "archetype_estimate"
+
+                # Fuel efficiency from vehicle spec (ICE/PHEV only)
+                fuel_type_v = str(vehicle.get("fuel_type", "")).upper()
+                if fuel_type_v in ("ICE", "PHEV"):
+                    base = vehicle.get("base_fuel_l100km")
+                    try:
+                        base = float(base)
+                    except (TypeError, ValueError):
+                        base = 9.0
+                    idle_adj = 1.0 + arch.get("idle_fraction", 0.15) * 0.3
+                    drv_raw["fuel_efficiency_l100km"] = round(base * idle_adj, 1)
         except Exception:
             pass
 

@@ -4,7 +4,7 @@ import {
   getVehicles, getVehicle, getVehiclePredictions, getVehicleAlerts,
   getVehicleServiceHistory, getVehicleTrips, getEVHealth,
   getBayStatus, getAppointments, createAppointment, updateAppointmentStatus,
-  getInventory, getDemandForecast,
+  getInventory, getDemandForecast, getDemandBreakdown,
   getInventoryOverview, getInventoryStock, getInventoryAlerts,
   getReorderPlan, getInventoryAnalytics, getDealerComparison,
   getPartDetail, getInventoryTransactions,
@@ -104,6 +104,9 @@ export const useInventory = (dealerCode: string) =>
 
 export const useDemandForecast = (dealerCode: string) =>
   useQuery({ queryKey: ['dealer', dealerCode, 'demand-forecast'], queryFn: () => getDemandForecast(dealerCode), enabled: !!dealerCode, staleTime: 0, refetchOnMount: 'always' })
+
+export const useDemandBreakdown = (dealerCode: string) =>
+  useQuery({ queryKey: ['dealer', dealerCode, 'demand-breakdown'], queryFn: () => getDemandBreakdown(dealerCode), enabled: !!dealerCode, staleTime: 0, refetchOnMount: 'always' })
 
 // ── Comprehensive inventory hooks ───────────────────────────────────────────
 export const useInventoryOverview = () =>

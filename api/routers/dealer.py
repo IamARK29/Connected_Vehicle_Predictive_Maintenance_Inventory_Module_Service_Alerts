@@ -412,6 +412,72 @@ def _compute_demand_forecast(dealer_code: str) -> list[dict]:
     return sorted(forecasts, key=lambda x: x["demand_30d"], reverse=True)
 
 
+def _compute_demand_by_group(group_col: str) -> list[dict]:
+    """Compute part demand totals grouped by region or dealer, proportional to fleet size."""
+    import pandas as pd
+
+    fleet_master = DATA_DIR / "fleet_master.csv"
+    fleet_csv    = DATA_DIR / "fleet.csv"
+    fleet_path   = fleet_master if fleet_master.exists() else fleet_csv
+    if not fleet_path.exists():
+        return []
+
+    fleet_df = pd.read_csv(fleet_path)
+    if group_col not in fleet_df.columns:
+        return []
+
+    # Compute fleet-wide avg km/month from trips if available
+    avg_km_per_month = 1500.0
+    trips_csv = DATA_DIR / "trips.csv"
+    if trips_csv.exists():
+        try:
+            t = pd.read_csv(trips_csv, usecols=["vin", "odometer", "startTime"], low_memory=False)
+            t["startTime"] = pd.to_datetime(t["startTime"], errors="coerce", utc=True)
+            t = t.dropna(subset=["startTime"])
+            if not t.empty:
+                span_months = max(1.0, (t["startTime"].max() - t["startTime"].min()).days / 30)
+                avg_km_per_month = float(t.groupby("vin")["odometer"].sum().mean() / span_months)
+        except Exception:
+            pass
+
+    rows = []
+    for group_val, grp in fleet_df.groupby(group_col):
+        n_vehicles = int(len(grp))
+        total: dict[str, int] = {h: 0 for h in ("7d", "15d", "30d", "60d", "90d")}
+
+        for meta in _PARTS_META.values():
+            if not meta["replace_km"]:
+                continue
+            d30   = (n_vehicles * avg_km_per_month / meta["replace_km"]) * meta["per_service_qty"]
+            daily = d30 / 30.0
+            total["7d"]  += max(0, round(daily * 7))
+            total["15d"] += max(0, round(daily * 15))
+            total["30d"] += max(0, round(d30))
+            total["60d"] += max(0, round(d30 * 2))
+            total["90d"] += max(0, round(d30 * 3))
+
+        row: dict = {
+            group_col:     str(group_val),
+            "fleet_count": n_vehicles,
+            "demand_7d":   total["7d"],
+            "demand_15d":  total["15d"],
+            "demand_30d":  total["30d"],
+            "demand_60d":  total["60d"],
+            "demand_90d":  total["90d"],
+        }
+        if group_col == "dealer_code":
+            row["dealer_name"] = str(grp["dealer_name"].iloc[0]) if "dealer_name" in grp.columns else ""
+            row["city"]        = str(grp["dealer_city"].iloc[0]) if "dealer_city" in grp.columns else ""
+            row["region"]      = str(grp["region"].iloc[0])      if "region"      in grp.columns else ""
+        elif group_col == "region":
+            codes = sorted(grp["dealer_code"].dropna().unique().tolist()) if "dealer_code" in grp.columns else []
+            row["dealers"] = codes
+
+        rows.append(row)
+
+    return sorted(rows, key=lambda x: x["demand_30d"], reverse=True)
+
+
 def _get_appointments(dealer_code: str, days_ahead: int = 7) -> list[dict]:
     from agent.appointment_manager import _LOCAL_BOOKINGS
     from datetime import date
@@ -711,3 +777,17 @@ async def demand_forecast(
 ):
     rows = _compute_demand_forecast(dealer_code)
     return [DemandForecast(**r) for r in rows]
+
+
+@router.get(
+    "/{dealer_code}/demand-breakdown",
+    summary="Demand forecast aggregated by region and dealer",
+)
+async def demand_breakdown(
+    dealer_code:  str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    return {
+        "by_region": _compute_demand_by_group("region"),
+        "by_dealer": _compute_demand_by_group("dealer_code"),
+    }

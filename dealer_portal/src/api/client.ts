@@ -95,6 +95,9 @@ export const getInventory = (dealerCode: string) =>
 export const getDemandForecast = (dealerCode: string) =>
   api.get(`/dealer/${dealerCode}/demand-forecast`).then(r => r.data)
 
+export const getDemandBreakdown = (dealerCode: string) =>
+  api.get(`/dealer/${dealerCode}/demand-breakdown`).then(r => r.data)
+
 // ── Comprehensive inventory endpoints ──────────────────────────────────────
 export const getInventoryOverview = () =>
   api.get('/inventory/overview').then(r => r.data)
