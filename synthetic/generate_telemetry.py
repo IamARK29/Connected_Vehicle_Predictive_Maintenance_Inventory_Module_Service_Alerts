@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from synthetic.config import SyntheticConfig, DRIVER_ARCHETYPES
+from synthetic.config import SyntheticConfig, DRIVER_ARCHETYPES, MONSOON_RAIN_PROBABILITY
 
 # ── Physical constants ─────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ _TYRE_LEAK    = 0.5 / (24 * 60)  # kPa/second natural leak
 _TYRE_TEMP_K  = 0.10             # kPa/°C above 25°C
 
 # EV battery constants
-_EV_EFFICIENCY_KWHKM = 0.18   # typical MG ZS EV: 18 kWh/100km
+_EV_EFFICIENCY_KWHKM = 0.18   # typical EV: 18 kWh/100km
 
 
 # ── Driver profile parameters ──────────────────────────────────────────────
@@ -198,6 +198,8 @@ class TelemetryGenerator:
         odometer       = float(vrow["initial_odometer"])
         home_lat       = float(vrow.get("home_lat",  19.08))
         home_long      = float(vrow.get("home_long", 72.88))
+        region         = str(vrow.get("region", "default")).strip().lower()
+        rain_probs     = MONSOON_RAIN_PROBABILITY.get(region, MONSOON_RAIN_PROBABILITY["default"])
 
         bat_kwh      = float(vrow["battery_capacity_kwh"]) if pd.notna(vrow.get("battery_capacity_kwh")) else None
         fuel_tank_l  = float(vrow["fuel_tank_l"])          if pd.notna(vrow.get("fuel_tank_l"))          else 50.0
@@ -221,6 +223,8 @@ class TelemetryGenerator:
             date     = start_dt + timedelta(days=day_idx)
             doy      = date.timetuple().tm_yday
             out_temp = 28.0 + 6.0 * math.sin(2 * math.pi * (doy - 60) / 365)
+
+            rain_prob_per_sec = rain_probs[date.month - 1]
             fail_ctx = self._failure_intensity(
                 specs, datetime.combine(date, datetime.min.time())
             )
@@ -258,6 +262,7 @@ class TelemetryGenerator:
                     driver_profile=driver_profile,
                     fuel_type=fuel_type,
                     fail_ctx=fail_ctx,
+                    rain_prob=rain_prob_per_sec,
                 )
                 all_frames.append(frame)
                 batt_12v = last_batt_12v
@@ -290,6 +295,7 @@ class TelemetryGenerator:
         km_since_charge, used_kwh_since_charge,
         out_temp, home_lat, home_long, driver_profile, fuel_type, fail_ctx,
         step: int = 1,
+        rain_prob: float = 0.05,
     ):
         rng   = self.rng
         is_ev = fuel_type in ("EV", "PHEV")
@@ -375,7 +381,7 @@ class TelemetryGenerator:
         # ── Lighting signals ──────────────────────────────────────────────
         hour_arr      = start_dt.hour + np.arange(n_sec) / 3600
         night_arr     = ((hour_arr % 24 > 19) | (hour_arr % 24 < 7)).astype(int)
-        rain_arr      = (rng.random(n_sec) < 0.08).astype(int) * rng.integers(1, 4, n_sec)
+        rain_arr      = (rng.random(n_sec) < rain_prob).astype(int) * rng.integers(1, 4, n_sec)
         dip_light     = np.where(driving_mask & ((night_arr > 0) | (rain_arr > 1)), 1, 0)
         main_light    = np.where(driving_mask & (night_arr > 0) & (rng.random(n_sec) < 0.15), 1, 0)
         side_light    = np.where(driving_mask, 1, 0)

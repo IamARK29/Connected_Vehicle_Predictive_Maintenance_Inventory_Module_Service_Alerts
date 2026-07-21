@@ -70,6 +70,12 @@ export const getVehicleServiceHistory = (vin: string, limit = 20) =>
 export const getVehicleTrips = (vin: string, limit = 20) =>
   api.get(`/vehicles/${vin}/trips`, { params: { limit } }).then(r => r.data)
 
+// EV Health
+export const getEVHealth = (
+  vin: string,
+  params?: { soc_pct?: number; outside_temp_c?: number; ac_is_on?: boolean }
+) => api.get(`/ev/${vin}/health`, { params }).then(r => r.data)
+
 // Dealer
 export const getBayStatus = (dealerCode: string) =>
   api.get(`/dealer/${dealerCode}/bay-status`).then(r => r.data)

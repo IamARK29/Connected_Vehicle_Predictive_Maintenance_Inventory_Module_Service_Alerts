@@ -122,21 +122,21 @@ class SyntheticConfig:
     seed: int = 42
 
     dealers: list = field(default_factory=lambda: [
-        DealerRecord("DL001", "MG Motors New Delhi",   "New Delhi",  "North",  28.61, 77.20),
-        DealerRecord("DL002", "MG Motors Mumbai",      "Mumbai",     "West",   19.08, 72.88),
-        DealerRecord("DL003", "MG Motors Bangalore",   "Bangalore",  "South",  12.97, 77.59),
-        DealerRecord("DL004", "MG Motors Chennai",     "Chennai",    "South",  13.08, 80.27),
-        DealerRecord("DL005", "MG Motors Hyderabad",   "Hyderabad",  "South",  17.38, 78.49),
-        DealerRecord("DL006", "MG Motors Pune",        "Pune",       "West",   18.52, 73.86),
-        DealerRecord("DL007", "MG Motors Kolkata",     "Kolkata",    "East",   22.57, 88.36),
-        DealerRecord("DL008", "MG Motors Ahmedabad",   "Ahmedabad",  "West",   23.03, 72.58),
+        DealerRecord("DL001", "AutoPredict New Delhi",   "New Delhi",  "North",  28.61, 77.20),
+        DealerRecord("DL002", "AutoPredict Mumbai",      "Mumbai",     "West",   19.08, 72.88),
+        DealerRecord("DL003", "AutoPredict Bangalore",   "Bangalore",  "South",  12.97, 77.59),
+        DealerRecord("DL004", "AutoPredict Chennai",     "Chennai",    "South",  13.08, 80.27),
+        DealerRecord("DL005", "AutoPredict Hyderabad",   "Hyderabad",  "South",  17.38, 78.49),
+        DealerRecord("DL006", "AutoPredict Pune",        "Pune",       "West",   18.52, 73.86),
+        DealerRecord("DL007", "AutoPredict Kolkata",     "Kolkata",    "East",   22.57, 88.36),
+        DealerRecord("DL008", "AutoPredict Ahmedabad",   "Ahmedabad",  "West",   23.03, 72.58),
     ])
 
     models: list = field(default_factory=lambda: [
-        ModelRecord("GLOSTER", "MG Gloster",  "ICE",  0.25, fuel_tank_l=75.0, base_fuel_l100km=12.0),
-        ModelRecord("HECTOR",  "MG Hector",   "ICE",  0.35, fuel_tank_l=50.0, base_fuel_l100km=9.0),
-        ModelRecord("ZSEV",    "MG ZS EV",    "EV",   0.30, battery_kwh=50.3, rated_range_km=461),
-        ModelRecord("ASTOR",   "MG Astor",    "PHEV", 0.10, battery_kwh=13.0, rated_range_km=80,
+        ModelRecord("GLOSTER", "Gloster",  "ICE",  0.25, fuel_tank_l=75.0, base_fuel_l100km=12.0),
+        ModelRecord("HECTOR",  "Hector",   "ICE",  0.35, fuel_tank_l=50.0, base_fuel_l100km=9.0),
+        ModelRecord("ZSEV",    "ZS EV",    "EV",   0.30, battery_kwh=50.3, rated_range_km=461),
+        ModelRecord("ASTOR",   "Astor",    "PHEV", 0.10, battery_kwh=13.0, rated_range_km=80,
                     fuel_tank_l=45.0, base_fuel_l100km=7.0),
     ])
 
@@ -164,3 +164,18 @@ class SyntheticConfig:
         "normal":           65,
         "eco":              50,
     })
+
+
+# Monthly daily rain probability by region (Indian climate — IMD monsoon model).
+# Index 0 = January … 11 = December.
+# Sourced from IMD monsoon onset/withdrawal normals; dealer regions map to keys.
+# fmt: off
+MONSOON_RAIN_PROBABILITY: dict[str, list[float]] = {
+    #         Jan   Feb   Mar   Apr   May   Jun   Jul   Aug   Sep   Oct   Nov   Dec
+    "north":  [0.03, 0.03, 0.04, 0.04, 0.06, 0.12, 0.38, 0.42, 0.26, 0.08, 0.03, 0.02],
+    "west":   [0.02, 0.01, 0.01, 0.02, 0.06, 0.32, 0.52, 0.48, 0.28, 0.07, 0.02, 0.01],
+    "south":  [0.06, 0.04, 0.05, 0.07, 0.12, 0.25, 0.32, 0.30, 0.28, 0.24, 0.22, 0.10],
+    "east":   [0.04, 0.04, 0.06, 0.10, 0.18, 0.32, 0.48, 0.45, 0.32, 0.15, 0.05, 0.03],
+    "default":[0.04, 0.03, 0.04, 0.06, 0.10, 0.25, 0.42, 0.40, 0.28, 0.13, 0.08, 0.04],
+}
+# fmt: on

@@ -12,7 +12,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from api.routers import vehicles, fleet, dealer, agent, upload, synthetic, monitoring, oem, admin, inventory as inventory_router
+from api.routers import vehicles, fleet, dealer, agent, upload, synthetic, monitoring, oem, admin, inventory as inventory_router, ev_health
 from api.ws import telemetry_stream
 from api.dependencies import create_access_token
 from api.schemas import TokenRequest
@@ -47,7 +47,7 @@ app = FastAPI(
     title="AutoPredict API",
     description=(
         "Automotive Predictive Maintenance Platform — vehicle health monitoring, "
-        "ML predictions, alert dispatch, and service scheduling for MG Motor India fleet."
+        "ML predictions, alert dispatch, and service scheduling for connected vehicle fleets."
     ),
     version="2.0.0",
     lifespan=lifespan,
@@ -98,6 +98,7 @@ app.include_router(monitoring.router,       prefix="/api")
 app.include_router(oem.router,              prefix="/api")
 app.include_router(admin.router,            prefix="/api")
 app.include_router(inventory_router.router, prefix="/api")
+app.include_router(ev_health.router,          prefix="/api")
 app.include_router(telemetry_stream.router)   # WebSocket — no /api prefix (ws://)
 
 # Legacy v1 routers (mounted under /api/v1 for backwards-compat)

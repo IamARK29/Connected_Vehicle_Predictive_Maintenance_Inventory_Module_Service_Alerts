@@ -5,17 +5,19 @@ import {
 } from 'recharts'
 
 const STATUS_COLORS: Record<string, string> = {
-  trained:            'bg-green-100 text-green-800',
-  not_trained:        'bg-gray-100 text-gray-500',
-  skipped:            'bg-yellow-100 text-yellow-700',
-  failed:             'bg-red-100 text-red-800',
+  trained:        'bg-green-100 text-green-800',
+  not_trained:    'bg-gray-100 text-gray-500',
+  skipped:        'bg-yellow-100 text-yellow-700',
+  failed:         'bg-red-100 text-red-800',
+  physics_based:  'bg-blue-100 text-blue-700',
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  trained:     'trained',
-  not_trained: 'not trained',
-  skipped:     'skipped',
-  failed:      'failed',
+  trained:        'trained',
+  not_trained:    'not trained',
+  skipped:        'skipped',
+  failed:         'failed',
+  physics_based:  'physics-based',
 }
 
 function ConcordanceGauge({ value, label }: { value: number | null; label: string }) {
@@ -52,12 +54,17 @@ function ModelCard({ model, onSelect, selected }: { model: any; onSelect: () => 
   const concordance = model.metrics?.concordance_index ?? null
   const auc = model.metrics?.cv_auc ?? null
   const isNotTrained = model.status === 'not_trained'
+  const isPhysicsBased = model.status === 'physics_based'
 
   return (
     <div
       onClick={onSelect}
       className={`rounded-xl border p-4 cursor-pointer transition-all ${
-        selected ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'
+        selected
+          ? isPhysicsBased
+            ? 'border-blue-400 ring-2 ring-blue-100 bg-blue-50/50'
+            : 'border-blue-500 ring-2 ring-blue-200 bg-blue-50'
+          : 'border-gray-200 bg-white hover:border-gray-300'
       } ${isNotTrained ? 'opacity-60' : ''}`}
     >
       <div className="flex items-start justify-between mb-3">
@@ -77,7 +84,14 @@ function ModelCard({ model, onSelect, selected }: { model: any; onSelect: () => 
         </div>
       </div>
 
-      {isNotTrained ? (
+      {isPhysicsBased ? (
+        <div className="text-center py-3 text-xs text-blue-400 flex flex-col items-center gap-1">
+          <svg className="w-5 h-5 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          Always active · No training required
+        </div>
+      ) : isNotTrained ? (
         <div className="text-center py-3 text-xs text-gray-400">
           Run training to generate metrics
         </div>
@@ -259,8 +273,11 @@ export default function OemModelHealth() {
           <p className="text-2xl font-bold text-gray-900">{summary.total_models ?? '—'}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs text-gray-500">Trained</p>
+          <p className="text-xs text-gray-500">Trained (ML)</p>
           <p className="text-2xl font-bold text-green-600">{summary.trained_count ?? 0}</p>
+          {(summary.physics_count ?? 0) > 0 && (
+            <p className="text-xs text-blue-500 mt-0.5">+{summary.physics_count} physics</p>
+          )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-xs text-gray-500">Not Trained</p>
@@ -309,6 +326,7 @@ export default function OemModelHealth() {
           {[
             { key: 'vehicle',     label: 'Vehicle Health Models' },
             { key: 'operational', label: 'Operational Models' },
+            { key: 'vehicle_ev',  label: 'EV Physics Engines' },
           ].map(({ key: cat, label }) => {
             const group = models.filter((m: any) => m.category === cat)
             if (group.length === 0) return null

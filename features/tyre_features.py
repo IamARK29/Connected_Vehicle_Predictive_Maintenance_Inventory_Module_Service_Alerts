@@ -12,7 +12,12 @@ import numpy as np
 import pandas as pd
 
 from features.base_pipeline import FeaturePipeline
-from features.derived_utils import compute_tyre_stress_per_trip, correct_tyre_pressure_for_temp
+from features.derived_utils import (
+    compute_tyre_stress_per_trip,
+    correct_tyre_pressure_for_temp,
+    correct_tyre_pressure_monsoon_adjusted,
+    compute_road_roughness_index,
+)
 
 _POSITIONS = ["fl", "fr", "rl", "rr"]
 _TYRE_COLS = {p: f"tyre_{p}" for p in _POSITIONS}  # internal col names
@@ -20,6 +25,21 @@ _TYRE_COLS = {p: f"tyre_{p}" for p in _POSITIONS}  # internal col names
 # Reference temperature for pressure correction (25°C, 0.10 kPa/°C per spec)
 _TYRE_TEMP_REF = 25.0
 _TYRE_TEMP_K   = 0.10
+
+
+def _session_minutes(df: pd.DataFrame) -> pd.Series:
+    """Minutes elapsed since the start of the current power-on session, per row.
+
+    Uses vehSysPwrMod (normalised to sys_pwr_mod) to detect session starts.
+    Returns 0.0 for parked/off rows and for DataFrames missing these columns.
+    """
+    if "timestamp" not in df.columns or "sys_pwr_mod" not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    pwr = df["sys_pwr_mod"].fillna(0)
+    session_id = ((pwr > 0) & (pwr.shift(1, fill_value=0) == 0)).cumsum()
+    session_start_ts = df.groupby(session_id)["timestamp"].transform("first")
+    elapsed = (df["timestamp"] - session_start_ts).dt.total_seconds() / 60.0
+    return elapsed.fillna(0.0).clip(lower=0.0)
 
 
 class TyreFeaturePipeline(FeaturePipeline):
@@ -67,11 +87,31 @@ class TyreFeaturePipeline(FeaturePipeline):
             features[f"pressure_{pos}_7d_avg"]    = float(t7.mean())       if len(t7) > 0  else np.nan
             features[f"pressure_{pos}_trend_14d"] = self._slope(t14)
 
-            # Temperature-corrected pressure via derived_utils (Charles's Law)
+            # Carcass-temperature-corrected pressure (Charles's Law + driving heat model)
             if len(t14) > 0 and len(tmp14) > 0:
+                spd14  = (d14["speed"].fillna(0.0) * 0.1
+                          if "speed" in d14.columns
+                          else pd.Series(0.0, index=d14.index))
+                min14  = _session_minutes(d14)
+                rain14 = (d14["rain_detected"].fillna(0.0)
+                          if "rain_detected" in d14.columns
+                          else pd.Series(0.0, index=d14.index))
+
+                valid_idx   = t14.dropna().index
+                tmp_aligned  = tmp14.reindex(valid_idx).fillna(25.0)
+                spd_aligned  = spd14.reindex(valid_idx).fillna(0.0)
+                min_aligned  = min14.reindex(valid_idx).fillna(0.0)
+                rain_aligned = rain14.reindex(valid_idx).fillna(0.0)
+
                 corrected_vals = [
-                    correct_tyre_pressure_for_temp(float(p_val), float(t_val))
-                    for p_val, t_val in zip(t14.dropna(), tmp14.loc[t14.dropna().index].fillna(25.0))
+                    correct_tyre_pressure_monsoon_adjusted(
+                        float(t14.loc[i]),
+                        float(tmp_aligned.loc[i]),
+                        float(spd_aligned.loc[i]),
+                        float(min_aligned.loc[i]),
+                        float(rain_aligned.loc[i]),
+                    )
+                    for i in valid_idx
                 ]
                 features[f"pressure_{pos}_temp_corrected"] = float(np.mean(corrected_vals)) if corrected_vals else np.nan
             else:
@@ -185,23 +225,28 @@ class TyreFeaturePipeline(FeaturePipeline):
         )
 
         # ── Tyre stress via derived_utils ──────────────────────────────────
-        fl_avg = features.get("pressure_fl_7d_avg", np.nan)
         mean_pressure_kpa = np.nanmean([
             features.get("pressure_fl_7d_avg", np.nan),
             features.get("pressure_fr_7d_avg", np.nan),
             features.get("pressure_rl_7d_avg", np.nan),
             features.get("pressure_rr_7d_avg", np.nan),
         ])
+        odo30_distance_km = float(odo30.max() - odo30.min()) if len(odo30) > 1 else 0.0
         trip_summary = {
             "harshBreakingNum": int(harsh_brake_mask.sum()),
             "suddenTurnNum":    int(sudden_turn_mask.sum()),
             "maxSpeed":         float(speed30.max()) if len(speed30) > 0 else 0.0,
-            "odometer":         float(odo30.max() - odo30.min()) if len(odo30) > 1 else 0.0,
+            "odometer":         odo30_distance_km,
         }
         tyre_stress_cumulative = compute_tyre_stress_per_trip(
             trip_summary,
             mean_pressure_kpa if not np.isnan(mean_pressure_kpa) else 230.0,
         )
+
+        # ── Road roughness stress (tboxAccelZ impact events, 30d) ──────────
+        roughness = compute_road_roughness_index(d30, distance_km=odo30_distance_km)
+        road_stress_multiplier    = roughness["road_stress_multiplier"]
+        tyre_stress_cumulative_adjusted = round(tyre_stress_cumulative * road_stress_multiplier, 3)
 
         # ── Pressure drop rates (per-corner: 7d avg vs 14d trend) ─────────
         for pos in _POSITIONS:
@@ -226,6 +271,11 @@ class TyreFeaturePipeline(FeaturePipeline):
             "sudden_turn_per_100km_30d":     sudden_turn_per_100km_30d,
             "esc_activation_rate_30d":       esc_activation_rate_30d,
             "avg_speed_30d":                 avg_speed_30d,
+            "tyre_stress_cumulative_adjusted": tyre_stress_cumulative_adjusted,
+            "road_roughness_index":          roughness["road_roughness_index"],
+            "road_stress_multiplier":        road_stress_multiplier,
+            "impacts_per_100km":             roughness["impacts_per_100km"],
+            "severe_impacts_30d":            roughness["severe_impacts_30d"],
             # Targets
             "days_to_tyre_replacement":            days_to_failure,
             "tyre_within_30_days":                 within_30,

@@ -47,9 +47,12 @@ class FeatureRefreshJob:
     """Celery-compatible job that refreshes feature groups for one or all VINs."""
 
     def refresh_all_vins(self, lookback_days: int = 90) -> dict:
-        fleet_path = _DATA_DIR / "fleet.csv"
-        if not fleet_path.exists():
-            log.error("fleet.csv not found at %s", fleet_path)
+        fleet_path = next(
+            (_DATA_DIR / n for n in ("fleet.csv", "fleet_master.csv") if (_DATA_DIR / n).exists()),
+            None,
+        )
+        if fleet_path is None:
+            log.error("fleet.csv / fleet_master.csv not found in %s", _DATA_DIR)
             return {"total": 0, "failed": 0, "elapsed_s": 0}
 
         fleet_df = pd.read_csv(fleet_path)
@@ -203,8 +206,11 @@ from(bucket: "tbox_standard")
         return pd.read_csv(p) if p.exists() else None
 
     def _get_fleet_row(self, vin: str) -> dict:
-        p = _DATA_DIR / "fleet.csv"
-        if not p.exists():
+        p = next(
+            (_DATA_DIR / n for n in ("fleet.csv", "fleet_master.csv") if (_DATA_DIR / n).exists()),
+            None,
+        )
+        if p is None:
             return {}
         df = pd.read_csv(p)
         rows = df[df["vin"] == vin]

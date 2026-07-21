@@ -130,6 +130,9 @@ async def inventory_stock(
         key=lambda col: col.map({"STOCKOUT": 0, "CRITICAL": 1, "LOW": 2, "OK": 3}) if col.name == "stock_status" else col,
     )
 
+    df = df.fillna({"service_types": "", "description": "", "supplier": "",
+                    "dealer_city": "", "last_restocked": "", "last_sold": ""})
+
     records = df.head(limit).to_dict("records")
     for r in records:
         r["inventory_value_inr"] = round(_safe_float(r.get("inventory_value_inr")), 2)
@@ -137,6 +140,10 @@ async def inventory_stock(
         r["stockout_prob"]       = round(_safe_float(r.get("stockout_prob")), 3)
         dos = r.get("days_of_supply", 999)
         r["days_of_supply"]      = None if dos >= 999 else int(dos)
+        # Ensure no NaN leaks through for any remaining string/numeric fields
+        for k, v in list(r.items()):
+            if isinstance(v, float) and (v != v):  # NaN check
+                r[k] = None
     return records
 
 
@@ -204,7 +211,7 @@ async def reorder_plan(
         supplier_groups: dict[str, list] = {}
 
         for _, row in dc_rows.iterrows():
-            supplier = str(row.get("supplier", "MG OEM Direct"))
+            supplier = str(row.get("supplier", "OEM Direct"))
             eoq      = int(row.get("eoq", 1))
             unit_cost= _safe_float(row.get("unit_cost_inr", 0))
             line_cost= round(eoq * unit_cost, 2)

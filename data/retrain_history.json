@@ -1,0 +1,17 @@
+[
+  {
+    "job_id": "retrain-20260704-084001-a681ab",
+    "triggered_by": "oem",
+    "trigger_type": "manual",
+    "started_at": "2026-07-04T08:40:01.966403+00:00",
+    "completed_at": "2026-07-04T08:40:10.047876+00:00",
+    "duration_minutes": null,
+    "status": "cancelled",
+    "models": [
+      "inventory_demand"
+    ],
+    "training_samples": null,
+    "champion_promoted": [],
+    "notes": "Individual retrain: Inventory Demand [Cancelled by user]"
+  }
+]

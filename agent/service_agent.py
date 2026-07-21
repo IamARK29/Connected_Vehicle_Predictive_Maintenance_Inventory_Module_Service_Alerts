@@ -355,7 +355,7 @@ def _node_delivery_notification(state: WorkflowState) -> WorkflowState:
 
     html = _render("delivery_ready.html", {
         "vehicle": veh, "appointment_id": appt,
-        "dealer_name":        veh.get("home_dealer_name", "Your MG Dealer"),
+        "dealer_name":        veh.get("home_dealer_name", "Your Dealer"),
         "services_performed": ["Brake pad replacement", "Fluid top-up"],
         "parts_replaced":     ["Brake Pads (Front + Rear)"],
         "warranty_applied":   cost.get("warranty_likely", False),

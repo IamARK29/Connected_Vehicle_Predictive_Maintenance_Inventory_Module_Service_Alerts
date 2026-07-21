@@ -47,69 +47,177 @@ def _load_service_history() -> pd.DataFrame:
     return pd.read_csv(p) if p.exists() else pd.DataFrame()
 
 
-def _generate_alerts_from_fleet(fleet: list[dict]) -> list[dict]:
-    """Generate realistic alerts from fleet data based on odometer and driver profile."""
-    alerts = []
-    rng = np.random.default_rng(42)
+_PROFILE_PENALTY: dict[str, float] = {
+    "aggressive": 15, "taxi_fleet": 12, "delivery_driver": 10,
+    "hill_region": 8, "urban_commuter": 3, "highway_cruiser": 2,
+    "elderly_cautious": 1, "eco_driver": 0,
+}
 
-    alert_defs = [
-        {"alert_type": "ML_BRAKE_REPLACEMENT", "severity": "HIGH",     "title": "Brake pad replacement needed",
-         "action": "Schedule brake service within 2 weeks", "cost_min": 3500, "cost_max": 8000,
-         "odo_thresh": 35000, "profiles": ["aggressive", "taxi_fleet", "delivery_driver"]},
-        {"alert_type": "ML_OIL_CHANGE_DUE",    "severity": "HIGH",     "title": "Oil change overdue",
-         "action": "Schedule oil change this week", "cost_min": 1200, "cost_max": 2500,
-         "odo_thresh": 5000, "profiles": ["aggressive", "taxi_fleet", "hill_region"]},
-        {"alert_type": "ML_BRAKE_WARNING",      "severity": "MEDIUM",   "title": "Brake wear accelerating",
-         "action": "Inspect brakes at next service", "cost_min": 3000, "cost_max": 6000,
-         "odo_thresh": 25000, "profiles": ["urban_commuter", "hill_region"]},
-        {"alert_type": "ML_OIL_ADVISORY",       "severity": "MEDIUM",   "title": "Oil change due soon",
-         "action": "Schedule oil change within 30 days", "cost_min": 1200, "cost_max": 1800,
-         "odo_thresh": 4000, "profiles": ["urban_commuter", "highway_cruiser"]},
-        {"alert_type": "ML_12V_ADVISORY",       "severity": "MEDIUM",   "title": "12V battery weakening",
-         "action": "Test battery at next service", "cost_min": 4500, "cost_max": 6500,
-         "odo_thresh": 50000, "profiles": ["elderly_cautious", "urban_commuter"]},
-        {"alert_type": "ML_TYRE_ADVISORY",      "severity": "MEDIUM",   "title": "Tyre wear increasing",
-         "action": "Inspect tyres, check alignment", "cost_min": 8500, "cost_max": 15000,
-         "odo_thresh": 30000, "profiles": ["aggressive", "hill_region", "taxi_fleet"]},
-        {"alert_type": "ML_HV_SOH_DECLINE",     "severity": "MEDIUM",   "title": "HV battery SoH declining",
-         "action": "Schedule battery assessment", "cost_min": 10000, "cost_max": 50000,
-         "odo_thresh": 60000, "profiles": ["taxi_fleet", "delivery_driver"], "fuel_types": ["EV", "PHEV"]},
-        {"alert_type": "ML_DRIVER_ADVISORY",     "severity": "LOW",      "title": "Driving behaviour advisory",
-         "action": "Review driving habits", "cost_min": 0, "cost_max": 0,
-         "odo_thresh": 0, "profiles": ["aggressive"]},
-    ]
+
+def _fleet_health_scores(fleet: list[dict], trips_df: pd.DataFrame | None = None) -> dict[str, float]:
+    """
+    Replicate _compute_vehicle_health() from vehicles.py using the identical formula
+    so alert severity is consistent with what the Predictions tab shows.
+    """
+    score_map: dict[str, float] = {}
+    for v in fleet:
+        vin     = str(v.get("vin", ""))
+        odo     = float(v.get("initial_odometer", 0) or 0)
+        profile = str(v.get("driver_profile", "urban_commuter") or "urban_commuter")
+        penalty = _PROFILE_PENALTY.get(profile, 5)
+        odo_factor = max(0.0, 100.0 - odo / 1500.0)
+
+        drive_score = 75.0
+        if trips_df is not None and not trips_df.empty:
+            if "vin" in trips_df.columns and "driveScore" in trips_df.columns:
+                vin_trips = trips_df[trips_df["vin"] == vin]
+                if not vin_trips.empty:
+                    drive_score = float(vin_trips["driveScore"].mean())
+
+        rng = np.random.default_rng(hash(vin) % 2**31)
+        health = float(np.clip(round(
+            odo_factor * 0.3 + drive_score * 0.4 + (100.0 - penalty) * 0.3
+            + float(rng.normal(0, 3)), 1
+        ), 20, 100))
+        score_map[vin] = health
+    return score_map
+
+
+_COMP_ALERTS: dict[str, dict] = {
+    # component → {status → alert definition}
+    "brake": {
+        "critical": {"alert_type": "ML_BRAKE_SYSTEM_FAILURE", "title": "Brake system critical — safety hazard",
+                     "action": "Do not drive — arrange tow to nearest workshop", "cost_min": 8000, "cost_max": 30000},
+        "warning":  {"alert_type": "ML_BRAKE_REPLACEMENT",    "title": "Brake pad replacement needed",
+                     "action": "Schedule brake service within 2 weeks",           "cost_min": 3500, "cost_max": 8000},
+    },
+    "tyre": {
+        "critical": {"alert_type": "ML_TYRE_CRITICAL",  "title": "Tyre wear critical — safety risk",
+                     "action": "Do not drive — replace tyres immediately",         "cost_min": 15000, "cost_max": 30000},
+        "warning":  {"alert_type": "ML_TYRE_ADVISORY",  "title": "Tyre wear increasing",
+                     "action": "Inspect tyres and check wheel alignment",          "cost_min": 8500,  "cost_max": 15000},
+    },
+    "battery_12v": {
+        "critical": {"alert_type": "ML_12V_BATTERY_FAILURE", "title": "12V battery failure imminent",
+                     "action": "Battery replacement required immediately",          "cost_min": 5500, "cost_max": 8500},
+        "warning":  {"alert_type": "ML_12V_ADVISORY",        "title": "12V battery weakening",
+                     "action": "Test battery at next service",                     "cost_min": 4500, "cost_max": 6500},
+    },
+    "engine_oil": {
+        "critical": {"alert_type": "ML_ENGINE_OIL_CRITICAL", "title": "Engine oil critically degraded — engine risk",
+                     "action": "Stop driving — oil change required immediately",   "cost_min": 1500, "cost_max": 25000},
+        "warning":  {"alert_type": "ML_OIL_CHANGE_DUE",     "title": "Engine oil change overdue",
+                     "action": "Schedule oil change this week",                    "cost_min": 1200, "cost_max": 2500},
+    },
+    "hv_battery": {
+        "critical": {"alert_type": "ML_HV_BATTERY_CRITICAL", "title": "HV traction battery critical degradation",
+                     "action": "EV drivetrain inspection required immediately",    "cost_min": 40000, "cost_max": 200000},
+        "warning":  {"alert_type": "ML_HV_SOH_DECLINE",     "title": "HV battery SoH declining",
+                     "action": "Schedule battery health assessment",               "cost_min": 10000, "cost_max": 50000},
+    },
+}
+_STATUS_TO_SEV = {"critical": "CRITICAL", "warning": "HIGH"}
+_SEV_CONF      = {"CRITICAL": 0.93, "HIGH": 0.80, "MEDIUM": 0.65, "LOW": 0.50}
+_SEV_ORDER     = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+
+
+def _vehicle_components(vin: str, v: dict) -> dict[str, tuple[float, str]]:
+    """
+    Compute per-component health scores using the IDENTICAL formula as
+    _compute_vehicle_health() in vehicles.py, so fleet alerts always match
+    what the Predictions tab shows for individual vehicles.
+    """
+    odo     = float(v.get("initial_odometer", 0) or 0)
+    fuel    = str(v.get("fuel_type", "ICE") or "ICE")
+    penalty = _PROFILE_PENALTY.get(str(v.get("driver_profile", "") or ""), 5)
+
+    rng = np.random.default_rng(hash(vin) % 2**31)
+    _ = float(rng.normal(0, 3))                          # advance past composite health draw
+
+    brake = round(max(30.0, 100 - odo / 900 - penalty  + float(rng.normal(0, 5))), 1)
+    tyre  = round(max(25.0, 100 - (odo % 50000) / 500  + float(rng.normal(0, 4))), 1)
+    bat12 = round(max(40.0, 90  - odo / 15000          + float(rng.normal(0, 3))), 1)
+
+    comps: dict[str, tuple[float, str]] = {
+        "brake":       (brake, "critical" if brake < 40 else "warning" if brake < 65 else "ok"),
+        "tyre":        (tyre,  "critical" if tyre  < 35 else "warning" if tyre  < 60 else "ok"),
+        "battery_12v": (bat12, "critical" if bat12 < 50 else "warning" if bat12 < 70 else "ok"),
+    }
+
+    if fuel != "EV":
+        oil = round(max(20.0, 100 - (odo % 7500) / 75 + float(rng.normal(0, 3))), 1)
+        comps["engine_oil"] = (oil, "critical" if oil < 30 else "warning" if oil < 60 else "ok")
+
+    if fuel in ("EV", "PHEV"):
+        hv = round(max(50.0, 95 - odo / 20000 + float(rng.normal(0, 2))), 1)
+        comps["hv_battery"] = (hv, "critical" if hv < 75 else "warning" if hv < 85 else "ok")
+
+    return comps
+
+
+def _generate_alerts_from_fleet(fleet: list[dict], trips_df: pd.DataFrame | None = None) -> list[dict]:
+    """
+    Generate component-level alerts that exactly mirror what the Vehicle Detail
+    Predictions tab shows — no random skip, no stale seed, CRITICAL always fires
+    for vehicles with critical-health components.
+    """
+    alerts: list[dict] = []
 
     for v in fleet:
-        vin = str(v.get("vin", ""))
-        odo = float(v.get("initial_odometer", 0) or 0)
-        profile = str(v.get("driver_profile", "urban_commuter"))
-        fuel = str(v.get("fuel_type", "ICE"))
-        model_name = str(v.get("model_name", ""))
+        vin        = str(v.get("vin", ""))
+        model_name = str(v.get("model_name", "") or "")
+        profile    = str(v.get("driver_profile", "urban_commuter") or "urban_commuter")
 
-        for ad in alert_defs:
-            if odo % max(ad["odo_thresh"], 1) > ad["odo_thresh"] * 0.7 or profile in ad.get("profiles", []):
-                if "fuel_types" in ad and fuel not in ad["fuel_types"]:
-                    continue
-                if float(rng.random()) > 0.4:
-                    continue
-                hours_ago = int(rng.integers(1, 168))
-                alerts.append({
-                    "vin": vin,
-                    "alert_type": ad["alert_type"],
-                    "severity": ad["severity"],
-                    "title": ad["title"],
-                    "message_customer": f"{ad['title']} - {model_name} ({vin[-8:]})",
-                    "recommended_action": ad["action"],
-                    "estimated_cost_min": ad["cost_min"],
-                    "estimated_cost_max": ad["cost_max"],
-                    "confidence_score": round(min(0.95, max(0.42,
-                        (0.85 if ad["severity"] == "HIGH" else 0.65 if ad["severity"] == "MEDIUM" else 0.48)
-                        + (hash(vin + ad["alert_type"]) % 100) / 1000.0
-                    )), 2),
-                    "triggered_at": (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat(),
-                })
+        vh = abs(hash(vin + "alerts_v3"))   # stable, version-tagged hash
 
-    alerts.sort(key=lambda a: {"HIGH": 0, "MEDIUM": 1, "LOW": 2}.get(a["severity"], 3))
+        comps = _vehicle_components(vin, v)
+
+        for comp_name, (score, status) in comps.items():
+            if status == "ok":
+                continue
+            sev = _STATUS_TO_SEV[status]            # "critical" → "CRITICAL", "warning" → "HIGH"
+            defn = _COMP_ALERTS.get(comp_name, {}).get(status)
+            if not defn:
+                continue
+
+            # Hours ago: CRITICAL = 1–24h, HIGH = 12–72h
+            hrs_min, hrs_max = (1, 24) if sev == "CRITICAL" else (12, 72)
+            # Spread across the window deterministically using comp hash
+            comp_seed = abs(hash(vin + comp_name))
+            hrs = hrs_min + (comp_seed % max(hrs_max - hrs_min, 1))
+
+            conf = round(min(0.99, _SEV_CONF[sev] + (comp_seed % 80) / 1000.0), 2)
+            comp_label = comp_name.replace("_", " ").title()
+
+            alerts.append({
+                "vin":                vin,
+                "alert_type":         defn["alert_type"],
+                "severity":           sev,
+                "title":              defn["title"],
+                "message_customer":   f"{comp_label} health at {score}% on {model_name} ({vin[-8:]})",
+                "recommended_action": defn["action"],
+                "estimated_cost_min": defn["cost_min"],
+                "estimated_cost_max": defn["cost_max"],
+                "confidence_score":   conf,
+                "triggered_at": (datetime.now(timezone.utc) - timedelta(hours=hrs)).isoformat(),
+            })
+
+        # LOW advisory for aggressive/taxi drivers — once per vehicle
+        if profile in ("aggressive", "taxi_fleet") and (vh % 2) == 0:
+            alerts.append({
+                "vin":                vin,
+                "alert_type":         "ML_DRIVER_ADVISORY",
+                "severity":           "LOW",
+                "title":              "Driving behaviour advisory",
+                "message_customer":   f"Aggressive driving detected on {model_name} ({vin[-8:]})",
+                "recommended_action": "Review driving habits to improve vehicle longevity",
+                "estimated_cost_min": 0,
+                "estimated_cost_max": 0,
+                "confidence_score":   round(0.52 + (vh % 60) / 1000.0, 2),
+                "triggered_at": (datetime.now(timezone.utc) - timedelta(hours=48 + vh % 120)).isoformat(),
+            })
+
+    alerts.sort(key=lambda a: (_SEV_ORDER.get(a["severity"], 4), a["triggered_at"]))
     return alerts
 
 
@@ -118,10 +226,11 @@ def _generate_alerts_from_fleet(fleet: list[dict]) -> list[dict]:
 @router.get("/health-summary", response_model=FleetHealthSummary)
 async def fleet_health_summary(current_user: Annotated[dict, Depends(get_current_user)]):
     fleet = _load_fleet()
+    trips = _load_trips()
     dc = current_user.get("dealer_code", "ALL")
     if dc and dc != "ALL":
         fleet = [v for v in fleet if str(v.get("dealer_code", "")) == dc]
-    alerts = _generate_alerts_from_fleet(fleet)
+    alerts = _generate_alerts_from_fleet(fleet, trips)
     n = len(fleet)
 
     critical = sum(1 for a in alerts if a.get("severity") == "CRITICAL")
@@ -129,7 +238,6 @@ async def fleet_health_summary(current_user: Annotated[dict, Depends(get_current
     medium = sum(1 for a in alerts if a.get("severity") == "MEDIUM")
     due = len({a["vin"] for a in alerts if a.get("severity") in ("CRITICAL", "HIGH")})
 
-    trips = _load_trips()
     avg_score = 0.0
     if not trips.empty and "driveScore" in trips.columns:
         avg_score = round(float(trips["driveScore"].mean()), 1)
@@ -156,9 +264,23 @@ async def active_alerts(
     limit: int = Query(200, ge=1, le=1000),
 ):
     fleet = _load_fleet()
-    alerts = _generate_alerts_from_fleet(fleet)
+    trips = _load_trips()
+    dc = current_user.get("dealer_code", "ALL")
+    if dc and dc != "ALL":
+        fleet = [v for v in fleet if str(v.get("dealer_code", "")) == dc]
+
+    alerts = _generate_alerts_from_fleet(fleet, trips)
+
+    # Apply the hours window — only return alerts triggered within [now - hours, now]
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    alerts = [
+        a for a in alerts
+        if datetime.fromisoformat(a["triggered_at"]) >= cutoff
+    ]
+
     if severity:
         alerts = [a for a in alerts if a.get("severity", "").upper() == severity.upper()]
+
     return {
         "count": len(alerts),
         "hours": hours,

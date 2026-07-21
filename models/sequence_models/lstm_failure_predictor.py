@@ -1,11 +1,11 @@
 """
 LSTM + Multi-Head Attention failure predictor.
 
-Input:  (batch, seq_len=30, n_features=10)
+Input:  (batch, seq_len=30, n_features=12)
 Output: (batch, 6)  — raw logits for 6 independent failure classes.
         Apply sigmoid at inference; train with BCEWithLogitsLoss.
 
-Feature vector (10 features, exact order and normalisation):
+Feature vector (12 features, exact order and normalisation):
   0: brake_stress_cumulative     / 5000.0
   1: harsh_brake_rate_30d        / 10.0
   2: oil_degradation_index       / 100.0
@@ -16,6 +16,8 @@ Feature vector (10 features, exact order and normalisation):
   7: composite_drive_score       / 100.0
   8: km_since_last_service       / 50000.0
   9: coolant_overtemp_count_30d  / 30.0
+ 10: charge_acceptance_ratio     / 1.0   (0.0 for ICE; EV/PHEV charging health)
+ 11: end_voltage_deficit_v       / 50.0  (0.0 for ICE; pack end-voltage shortfall)
 
 Output labels (6 classes, multi-label):
   0: brake_replacement_within_30_days
@@ -47,17 +49,21 @@ FEATURE_NAMES = [
     "composite_drive_score",
     "km_since_last_service",
     "coolant_overtemp_count_30d",
+    "charge_acceptance_ratio",   # EV/PHEV only; 0.0 for ICE
+    "end_voltage_deficit_v",     # EV/PHEV only; 0.0 for ICE
 ]
+
+N_FEATURES = len(FEATURE_NAMES)
 
 CLASS_NAMES = ["brake", "oil", "hv_battery", "12v_battery", "tyre", "overheating"]
 
 # Normalisation: x_norm = (x - offset) / divisor
-_NORM_OFFSETS   = [0.0, 0.0, 0.0, 0.0, 0.0, 11.5, 0.0, 0.0, 0.0, 0.0]
-_NORM_DIVISORS  = [5000.0, 10.0, 100.0, 100.0, 0.1, 3.0, 300.0, 100.0, 50000.0, 30.0]
+_NORM_OFFSETS   = [0.0, 0.0, 0.0, 0.0, 0.0, 11.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+_NORM_DIVISORS  = [5000.0, 10.0, 100.0, 100.0, 0.1, 3.0, 300.0, 100.0, 50000.0, 30.0, 1.0, 50.0]
 
 NORM_STATS = {
     "feature_names":  FEATURE_NAMES,
-    "norm_factors":   [5000, 10, 100, 100, 0.1, None, 300, 100, 50000, 30],
+    "norm_factors":   [5000, 10, 100, 100, 0.1, None, 300, 100, 50000, 30, 1.0, 50.0],
     "norm_offsets":   _NORM_OFFSETS,
     "norm_divisors":  _NORM_DIVISORS,
     "class_names":    CLASS_NAMES,
@@ -81,7 +87,7 @@ try:
     class LSTMFailurePredictor(nn.Module):
         def __init__(
             self,
-            input_size: int = 10,
+            input_size: int = N_FEATURES,
             hidden_size: int = 64,
             num_layers: int = 2,
             num_classes: int = 6,
@@ -124,7 +130,7 @@ def build_sequences(
     """
     Build (X, y, dates, vins) from offline Parquet feature store.
 
-    X: float32 array [N, seq_len, 10]
+    X: float32 array [N, seq_len, N_FEATURES]
     y: float32 array [N, 6]
     dates: list of pd.Timestamp (feature_cutoff date for each sample)
     vins:  list of str
@@ -138,7 +144,7 @@ def build_sequences(
 
     if not fails_path.exists():
         log.warning("failures_manifest not found: %s", fails_path)
-        return np.zeros((0, seq_len, 10), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
+        return np.zeros((0, seq_len, N_FEATURES), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
 
     failures = pd.read_csv(fails_path, parse_dates=["failure_date"])
 
@@ -158,7 +164,7 @@ def build_sequences(
     parquet_files = sorted(feature_store_dir.rglob("*.parquet"))
     if not parquet_files:
         log.warning("No Parquet files found in %s", feature_store_dir)
-        return np.zeros((0, seq_len, 10), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
+        return np.zeros((0, seq_len, N_FEATURES), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
 
     # Load all feature records
     all_dfs = []
@@ -170,7 +176,7 @@ def build_sequences(
         except Exception as exc:
             log.debug("Skipping %s: %s", pf, exc)
     if not all_dfs:
-        return np.zeros((0, seq_len, 10), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
+        return np.zeros((0, seq_len, N_FEATURES), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
 
     df_all = pd.concat(all_dfs, ignore_index=True)
     df_all["feature_date"] = pd.to_datetime(df_all["feature_date"])
@@ -187,8 +193,8 @@ def build_sequences(
             window = vin_df.iloc[end_idx - seq_len + 1: end_idx + 1]
             feature_cutoff = window["feature_date"].iloc[-1]
 
-            # Build feature matrix [seq_len, 10]
-            seq = np.zeros((seq_len, 10), dtype=np.float32)
+            # Build feature matrix [seq_len, N_FEATURES]
+            seq = np.zeros((seq_len, N_FEATURES), dtype=np.float32)
             for row_i, (_, row) in enumerate(window.iterrows()):
                 raw_vec = [
                     float(row.get("brake_stress_cumulative",    0.0) or 0.0),
@@ -201,6 +207,9 @@ def build_sequences(
                     float(row.get("composite_drive_score",      70.0) or 70.0),
                     float(row.get("km_since_last_service",      0.0) or 0.0),
                     float(row.get("coolant_overtemp_count_30d", 0.0) or 0.0),
+                    # EV/PHEV charging features (0.0 for ICE vehicles)
+                    float(row.get("charge_acceptance_ratio",    0.0) or 0.0),
+                    float(row.get("end_voltage_deficit_v",      0.0) or 0.0),
                 ]
                 seq[row_i] = normalise_features(raw_vec)
 
@@ -222,7 +231,7 @@ def build_sequences(
             vins_list.append(str(vin))
 
     if not X_list:
-        return np.zeros((0, seq_len, 10), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
+        return np.zeros((0, seq_len, N_FEATURES), dtype=np.float32), np.zeros((0, 6), dtype=np.float32), [], []
 
     return (
         np.stack(X_list).astype(np.float32),

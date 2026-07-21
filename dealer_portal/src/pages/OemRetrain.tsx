@@ -12,6 +12,12 @@ const AVAILABLE_MODELS = [
   { id: 'inventory_demand',  label: 'Inventory Demand',      algo: 'LightGBM Regressor (30d forecast)' },
 ]
 
+const EV_PHYSICS_ENGINES = [
+  { id: 'ev_motor_health',         label: 'EV Motor & Inverter',      algo: 'Physics + Heuristic Rule Engine' },
+  { id: 'ev_dcdc_health',          label: 'DC-DC Converter',           algo: 'Physics + Heuristic Rule Engine' },
+  { id: 'ev_charging_degradation', label: 'EV Charging Degradation',   algo: 'Coulomb Counting + Statistical Rules' },
+]
+
 const STATUS_STYLES: Record<string, string> = {
   completed:  'bg-green-100 text-green-800',
   queued:     'bg-yellow-100 text-yellow-800',
@@ -157,6 +163,37 @@ export default function OemRetrain() {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* EV physics engines — read-only, no retraining needed */}
+          <div className="border-t border-gray-100 pt-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+              EV Physics Engines
+              <span className="ml-2 normal-case font-normal text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded text-[10px]">
+                No training required
+              </span>
+            </p>
+            <div className="space-y-1.5">
+              {EV_PHYSICS_ENGINES.map(m => (
+                <div key={m.id} className="flex items-center gap-2 p-2 rounded-lg bg-blue-50/50">
+                  <div className="w-4 h-4 flex-shrink-0 flex items-center justify-center">
+                    <svg className="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-700 leading-tight">{m.label}</p>
+                    <p className="text-xs text-gray-400 truncate">{m.algo}</p>
+                  </div>
+                  <span className="text-[10px] text-blue-500 border border-blue-200 px-1.5 py-0.5 rounded bg-white flex-shrink-0">
+                    Active
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-2 leading-snug">
+              These engines run continuously without retraining. Thresholds are derived from MG Motor EV specifications and Coulomb-counting physics.
+            </p>
           </div>
 
           <div>

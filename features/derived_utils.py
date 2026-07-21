@@ -156,9 +156,13 @@ def compute_oil_degradation_index(
     df_vin: pd.DataFrame,
     service_history_vin: pd.DataFrame,
     oil_change_interval_km: float = 7500,
+    road_impacts_per_100km: float = 0.0,
 ) -> float:
-    """ODI = 0.35×F_km + 0.20×F_cold + 0.20×F_thermal + 0.15×F_rpm + 0.10×F_fuel
+    """ODI = 0.30×F_km + 0.18×F_cold + 0.18×F_thermal + 0.14×F_rpm + 0.10×F_fuel + 0.10×F_road
     Returns 0.0–100.0 (100 = change immediately).
+
+    road_impacts_per_100km: from compute_road_roughness_index()["impacts_per_100km"].
+    Road impacts accelerate oil contamination via bearing surface abrasion.
     """
     odo = _col_opt(df_vin, "vehOdo")
     current_km = float(odo.dropna().max()) if not odo.dropna().empty else 0.0
@@ -192,7 +196,10 @@ def compute_oil_degradation_index(
     high_rpm = int((rpm.fillna(0) > 4000).sum())
     F_rpm = min(1.0, high_rpm / driving_count)
 
-    odi = 0.35 * F_km + 0.20 * F_cold + 0.20 * F_thermal + 0.15 * F_rpm + 0.10 * 0.0
+    F_road = min(1.0, road_impacts_per_100km / 100.0)
+
+    odi = (0.30 * F_km + 0.18 * F_cold + 0.18 * F_thermal +
+           0.14 * F_rpm + 0.10 * 0.0 + 0.10 * F_road)
     return round(min(100.0, odi * 100), 2)
 
 
@@ -326,16 +333,270 @@ def compute_composite_drive_score(
     return round(min(100.0, max(0.0, score)), 1)
 
 
-# ── PRESSURE TEMPERATURE CORRECTION (Charles's Law) ──────────────────────────
+# ── BRAKE GLAZING FACTOR (monsoon / wet-park correction) ─────────────────────
+# Brake pads develop a glazed surface when they get wet and then dry without
+# being used — common during India monsoon. The glazed surface has lower
+# friction at session start; the driver presses harder, generating more wear
+# than the base BSI (pedal travel proxy alone) would predict.
+
+# Coefficient used in harsh-brake-rate rain adjustment.
+# Named here so it can be revised from one place if field data updates it.
+_RAIN_HARSH_BRAKE_COEFF = 0.3   # rate multiplied by (1 + coeff × rain_intensity/3)
+
+
+def compute_session_start_glazing_factor(
+    park_duration_hours: float,
+    rain_intensity_during_park: int,
+    ambient_humidity_proxy: float = 0.0,
+) -> float:
+    """Glazing multiplier for the BSI of the first 3 braking events in a session.
+
+    Called with rain data read from actual vehRainDetected in the telemetry
+    park window — no values hardcoded here.
+
+    Args:
+        park_duration_hours:        hours since last drive session ended
+        rain_intensity_during_park: max vehRainDetected in park window (0–3)
+        ambient_humidity_proxy:     abs(vehInsideTemp − vehOutsideTemp) during park;
+                                    reserved for future calibration (not yet used)
+
+    Returns:
+        1.0 (no glazing) to 1.8 (severe glazing).
+    """
+    if rain_intensity_during_park == 0:
+        return 1.0
+
+    if park_duration_hours < 0.5:
+        glazing_factor = 1.0     # still wet — glaze has not formed yet
+    elif park_duration_hours < 2:
+        glazing_factor = 1.3     # partial glaze forming
+    elif park_duration_hours < 8:
+        glazing_factor = 1.6     # moderate: overnight or mid-day park in rain
+    else:
+        glazing_factor = 1.8     # long park with rain then partial drying
+
+    # Light rain glazes less severely than heavy rain
+    if rain_intensity_during_park == 1:
+        glazing_factor = 1.0 + (glazing_factor - 1.0) * 0.5
+
+    return round(glazing_factor, 2)
+
+
+def compute_brake_stress_index_with_glazing(
+    df: pd.DataFrame,
+    glazing_factor: float,
+) -> pd.DataFrame:
+    """BSI calculation with a session-start glazing multiplier.
+
+    Applies a decaying multiplier to the first 3 braking events after a wet park.
+    After 3 events the glaze has worn through and base BSI resumes.
+
+    Decay: event 1 = full multiplier, event 2 = 70 %, event 3 = 40 %.
+
+    Args:
+        df:             session DataFrame (should cover a single driving session)
+        glazing_factor: from compute_session_start_glazing_factor()
+    """
+    df = df.copy()
+    brake = _col(df, "vehBrakePos")
+    speed = _col(df, "vehSpeed")
+    brake_pct = brake * 0.4         # raw → %
+    speed_kph = speed * 0.1         # raw → kph
+    base_bsi  = brake_pct * (speed_kph / 100.0) ** 2
+    df["bsi"] = base_bsi.where(brake > 25, 0.0)
+
+    if glazing_factor <= 1.0:
+        return df
+
+    # Braking events: raw brake pos > 50 = 20% physical pedal travel
+    brake_events = brake > 50
+    event_number = brake_events.cumsum()
+
+    glazing_decay = {
+        1: glazing_factor,
+        2: 1.0 + (glazing_factor - 1.0) * 0.70,
+        3: 1.0 + (glazing_factor - 1.0) * 0.40,
+    }
+    for event_n, multiplier in glazing_decay.items():
+        mask = brake_events & (event_number == event_n)
+        df.loc[mask, "bsi"] = df.loc[mask, "bsi"] * multiplier
+
+    return df
+
+
+# ── TYRE CARCASS TEMPERATURE MODEL ───────────────────────────────────────────
+# On a 44°C day in Nagpur, a tyre at 100 kph on concrete runs 18–22°C above
+# ambient. City stop-and-go adds 6–10°C from hysteresis flexing.
+# Using ambient alone underestimates true tyre temp by 15–20°C and causes
+# false low-pressure alerts on correctly-inflated hot tyres.
+
+def estimate_tyre_carcass_temp(
+    ambient_temp_c: float,
+    speed_kph: float,
+    recent_driving_minutes: float,
+) -> float:
+    """Estimate tyre carcass temperature above ambient from driving conditions.
+
+    Args:
+        ambient_temp_c:           vehOutsideTemp decoded (physical °C)
+        speed_kph:                current or recent average speed (physical kph)
+        recent_driving_minutes:   minutes elapsed since session start
+    """
+    if speed_kph < 40:
+        peak_rise = 6.0
+    elif speed_kph < 80:
+        peak_rise = 12.0
+    else:
+        peak_rise = 20.0
+
+    # Heat builds toward peak over ~12 minutes of sustained driving
+    time_factor = min(1.0, recent_driving_minutes / 12.0)
+    return round(ambient_temp_c + peak_rise * time_factor, 1)
+
 
 def correct_tyre_pressure_for_temp(
     pressure_kpa: float,
-    outside_temp_c: float,
+    ambient_temp_c: float,
+    speed_kph: float = 0.0,
+    recent_driving_minutes: float = 0.0,
     reference_temp_c: float = 25.0,
 ) -> float:
-    """P_corrected = P_measured × (273.15 + ref) / (273.15 + measured_temp)"""
+    """Charles's Law pressure correction using estimated carcass temperature.
+
+    At rest (speed=0, minutes<3): uses ambient directly.
+    During/after driving: uses estimated carcass temperature so hot-tyre
+    readings are not falsely flagged as low pressure.
+
+    P_ref = P_measured × (273.15 + ref_temp) / (273.15 + effective_tyre_temp)
+    """
+    if recent_driving_minutes < 3 or speed_kph < 10:
+        effective_temp = ambient_temp_c
+    else:
+        effective_temp = estimate_tyre_carcass_temp(
+            ambient_temp_c, speed_kph, recent_driving_minutes
+        )
     return round(
-        pressure_kpa * (273.15 + reference_temp_c) / (273.15 + outside_temp_c),
+        pressure_kpa * (273.15 + reference_temp_c) / (273.15 + effective_temp),
         2,
     )
+
+
+def correct_tyre_pressure_monsoon_adjusted(
+    pressure_kpa: float,
+    ambient_temp_c: float,
+    speed_kph: float,
+    recent_driving_minutes: float,
+    rain_intensity: float,
+    reference_temp_c: float = 25.0,
+) -> float:
+    """Monsoon-season variant: wet road spray cools tyre surface by ~4°C.
+
+    vehRainDetected >= 2 at speed > 40 kph = moderate-to-heavy rain on highway.
+    Reduces peak_rise to prevent over-correcting pressure during monsoon drives.
+    """
+    rain_cooling = 4.0 if (rain_intensity >= 2 and speed_kph > 40) else 0.0
+    return correct_tyre_pressure_for_temp(
+        pressure_kpa,
+        ambient_temp_c - rain_cooling,
+        speed_kph,
+        recent_driving_minutes,
+        reference_temp_c,
+    )
+
+
+# ── ROAD ROUGHNESS STRESS INDEX ───────────────────────────────────────────────
+# tboxAccelZ raw × 0.004 = g.  At rest on a flat road the Z-axis reads ≈ +1.0g
+# (gravity).  A pothole or speed bump registers as a deviation from 1.0g.
+# Cities like Mumbai and Kolkata can produce 30–100+ impacts per 100 km.
+
+def detect_road_impact_events(
+    df: pd.DataFrame,
+    impact_threshold_g: float = 1.4,
+) -> pd.DataFrame:
+    """Detect pothole and speed-bump impacts from the vertical accelerometer.
+
+    Args:
+        df:                 Telemetry DataFrame (raw or normalised column names).
+        impact_threshold_g: Deviation from 1.0g that constitutes a significant
+                            impact. 1.4g = moderate, 2.0g = severe, 3.5g = extreme.
+
+    Adds columns:
+        is_road_impact   (bool)
+        impact_severity  (int 0–3)
+    """
+    sort_cols = [c for c in ["vin", "timestamp"] if c in df.columns]
+    df = df.sort_values(sort_cols).copy() if sort_cols else df.copy()
+
+    # default 250 raw ≈ 1.0g at rest so deviation ≈ 0 on flat road when column missing
+    accel_z_raw = _col(df, "tboxAccelZ", default=250.0)
+    accel_z_g   = accel_z_raw * 0.004
+    deviation   = (accel_z_g - 1.0).abs()
+
+    speed_kph = _col(df, "vehSpeed") * 0.1
+
+    impact_mask = (deviation > impact_threshold_g) & (speed_kph > 5)
+    df["is_road_impact"] = impact_mask.fillna(False)
+
+    df["impact_severity"] = 0
+    df.loc[df["is_road_impact"] & (deviation > 1.4) & (deviation <= 2.0), "impact_severity"] = 1
+    df.loc[df["is_road_impact"] & (deviation > 2.0) & (deviation <= 3.0), "impact_severity"] = 2
+    df.loc[df["is_road_impact"] & (deviation > 3.0),                      "impact_severity"] = 3
+
+    return df
+
+
+def compute_road_roughness_index(
+    df: pd.DataFrame,
+    distance_km: float | None = None,
+) -> dict[str, float | int]:
+    """Summarise road roughness experienced over the provided DataFrame window.
+
+    Args:
+        df:          Telemetry DataFrame for the analysis window.
+        distance_km: Pre-computed distance in km.  When provided, skips odo
+                     column lookup (use this when passing a normalised df where
+                     the odo unit is already known).
+
+    Returns dict:
+        road_roughness_index    0–100 (0=smooth, 100=extremely rough)
+        road_stress_multiplier  1.00–1.50 applied to tyre/suspension wear models
+        impacts_per_100km       raw impact rate
+        severe_impacts_30d      count of severity ≥ 2 events
+    """
+    _null: dict[str, float | int] = {
+        "road_roughness_index":   0.0,
+        "road_stress_multiplier": 1.0,
+        "impacts_per_100km":      0.0,
+        "severe_impacts_30d":     0,
+    }
+
+    df = detect_road_impact_events(df)
+
+    if distance_km is None:
+        odo_col = next((c for c in ["odometer", "vehOdo", "VehOdo"] if c in df.columns), None)
+        if odo_col is None:
+            return _null
+        if "vin" in df.columns:
+            distance_km = float(
+                df.groupby("vin")[odo_col].apply(lambda x: x.max() - x.min()).sum()
+            )
+        else:
+            distance_km = float(df[odo_col].max() - df[odo_col].min())
+
+    if distance_km < 10:
+        return _null
+
+    impacts_per_100km  = float(df["is_road_impact"].sum()) / distance_km * 100
+    severe_impacts     = int((df["impact_severity"] >= 2).sum())
+
+    # Benchmark: smooth highway < 5/100km; typical Indian urban 30–80/100km; very rough > 100/100km
+    road_roughness_index   = min(100.0, impacts_per_100km * 0.80)
+    road_stress_multiplier = 1.0 + min(0.50, impacts_per_100km / 200.0)
+
+    return {
+        "road_roughness_index":   round(road_roughness_index, 1),
+        "road_stress_multiplier": round(road_stress_multiplier, 3),
+        "impacts_per_100km":      round(impacts_per_100km, 1),
+        "severe_impacts_30d":     severe_impacts,
+    }
 

@@ -216,7 +216,7 @@ def _html_email(alert: Any, vehicle_profile: dict) -> str:
         </p>
     </div>
     <p style="color:#aaa;font-size:11px;text-align:center;margin-top:15px">
-        AutoPredict by MG Motor India · You are receiving this because you opted in to vehicle health alerts.
+        AutoPredict · You are receiving this because you opted in to vehicle health alerts.
     </p>
     </body></html>
     """

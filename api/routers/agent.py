@@ -186,12 +186,38 @@ async def chat_with_agent(
         from langchain_core.messages import HumanMessage, SystemMessage
 
         system = (
-            "You are AutoPredict's AI Service Agent for MG Motor India. "
+            "You are AutoPredict's AI Service Agent for connected vehicle predictive maintenance. "
             "You specialize in predictive vehicle maintenance, cost estimation, "
             "and service scheduling. Be concise, helpful, and safety-first."
         )
         if payload.vin:
             system += f" You are currently analysing vehicle VIN: {payload.vin}."
+
+            # Inject EV cost context when available so the agent can answer
+            # "how much does it cost me to drive this car?" with real data.
+            try:
+                from features.feature_store import FeatureStore
+                from features.ev_cost_features import PETROL_COST_PER_KM_INR
+                driver_feats = FeatureStore().get_online(payload.vin, "driver") or {}
+                cost_per_km  = driver_feats.get("cost_per_km_inr")
+                if cost_per_km is not None:
+                    saving     = PETROL_COST_PER_KM_INR - float(cost_per_km)
+                    comparison = "cheaper" if saving > 0 else "more expensive"
+                    system += (
+                        f" This vehicle's current EV charging cost is ₹{cost_per_km:.2f}/km. "
+                        f"Petrol benchmark: ₹{PETROL_COST_PER_KM_INR:.2f}/km "
+                        f"(₹100/L petrol at 12 km/L). "
+                        f"The EV is ₹{abs(saving):.2f}/km {comparison} than petrol. "
+                        f"When the customer asks about driving costs, use these figures."
+                    )
+                    dc_premium = driver_feats.get("dc_charge_premium_inr_30d")
+                    if dc_premium and float(dc_premium) > 0:
+                        system += (
+                            f" The customer is paying ₹{dc_premium:.0f} extra this month "
+                            f"by using DC fast chargers instead of home AC charging."
+                        )
+            except Exception:
+                pass   # Redis unavailable or not EV — proceed without cost context
 
         llm = ChatAnthropic(
             model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),

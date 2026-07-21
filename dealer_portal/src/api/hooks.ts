@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getFleetHealth, getFleetAlerts, getMaintenanceCalendar, getDriverScores,
   getVehicles, getVehicle, getVehiclePredictions, getVehicleAlerts,
-  getVehicleServiceHistory, getVehicleTrips,
+  getVehicleServiceHistory, getVehicleTrips, getEVHealth,
   getBayStatus, getAppointments, createAppointment, updateAppointmentStatus,
   getInventory, getDemandForecast,
   getInventoryOverview, getInventoryStock, getInventoryAlerts,
@@ -56,6 +56,14 @@ export const useVehicleServiceHistory = (vin: string) =>
 
 export const useVehicleTrips = (vin: string) =>
   useQuery({ queryKey: ['vehicles', vin, 'trips'], queryFn: () => getVehicleTrips(vin), enabled: !!vin })
+
+export const useEVHealth = (vin: string, enabled = true) =>
+  useQuery({
+    queryKey: ['ev', vin, 'health'],
+    queryFn:  () => getEVHealth(vin),
+    enabled:  !!vin && enabled,
+    staleTime: 60_000,
+  })
 
 // ── Dealer ─────────────────────────────────────────────────────────────────────
 

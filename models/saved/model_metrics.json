@@ -430,5 +430,95 @@
     "trained_at": "2026-07-03T19:44:14.799683+00:00",
     "status": "trained",
     "notes": "Inventory demand LightGBM trained in 0.3s, MAE=5.76"
+  },
+  "ev_motor_health": {
+    "model_name": "ev_motor_health",
+    "algorithm": "Physics + Heuristic Rule Engine",
+    "target": "motor_health_score",
+    "training_samples": null,
+    "feature_names": [
+      "inv_temp_max_30d",
+      "stator_temp_max_30d",
+      "torque_efficiency_mean_30d",
+      "torque_ripple_proxy_nm",
+      "motor_overtemp_events_30d",
+      "high_load_torque_fraction_30d",
+      "speed_torque_correlation",
+      "peak_torque_util_fraction"
+    ],
+    "feature_importances": {
+      "inv_temp_max_30d": 0.25,
+      "stator_temp_max_30d": 0.20,
+      "torque_efficiency_mean_30d": 0.20,
+      "torque_ripple_proxy_nm": 0.15,
+      "motor_overtemp_events_30d": 0.10,
+      "high_load_torque_fraction_30d": 0.05,
+      "speed_torque_correlation": 0.03,
+      "peak_torque_util_fraction": 0.02
+    },
+    "metrics": {},
+    "trained_at": null,
+    "status": "physics_based",
+    "notes": "Rule-based engine using TBox CH-21 motor/inverter signals (vehTMInvtrTem, vehTMSttrTem, vehTMActuToq, vehTMSpd). No training required — thresholds derived from MG Motor EV specs."
+  },
+  "ev_dcdc_health": {
+    "model_name": "ev_dcdc_health",
+    "algorithm": "Physics + Heuristic Rule Engine",
+    "target": "dcdc_health_score",
+    "training_samples": null,
+    "feature_names": [
+      "dcdc_output_v_mean_30d",
+      "dcdc_output_v_min_30d",
+      "dcdc_temp_max_30d",
+      "dcdc_output_v_std_30d",
+      "high_load_voltage_droop_v",
+      "dcdc_startup_recovery_v",
+      "dcdc_overtemp_events_30d"
+    ],
+    "feature_importances": {
+      "dcdc_output_v_min_30d": 0.30,
+      "high_load_voltage_droop_v": 0.25,
+      "dcdc_output_v_mean_30d": 0.20,
+      "dcdc_temp_max_30d": 0.15,
+      "dcdc_output_v_std_30d": 0.05,
+      "dcdc_startup_recovery_v": 0.03,
+      "dcdc_overtemp_events_30d": 0.02
+    },
+    "metrics": {},
+    "trained_at": null,
+    "status": "physics_based",
+    "notes": "Rule-based engine using TBox vehHVDCDCTem and vehBatt signals. Monitors 12V output stability under high-voltage bus load. No training required."
+  },
+  "ev_charging_degradation": {
+    "model_name": "ev_charging_degradation",
+    "algorithm": "Coulomb Counting + Statistical Rules",
+    "target": "charge_health_score",
+    "training_samples": null,
+    "feature_names": [
+      "charge_acceptance_ratio",
+      "charge_duration_deviation_pct",
+      "soh_rolling_30d",
+      "avg_soc_after_overnight_ac",
+      "dc_charge_ratio_30d",
+      "end_voltage_deficit_v",
+      "avg_charge_c_rate_30d",
+      "charge_session_count_30d",
+      "soh_trend_slope_90d"
+    ],
+    "feature_importances": {
+      "soh_rolling_30d": 0.30,
+      "charge_acceptance_ratio": 0.20,
+      "end_voltage_deficit_v": 0.15,
+      "charge_duration_deviation_pct": 0.12,
+      "soh_trend_slope_90d": 0.10,
+      "dc_charge_ratio_30d": 0.07,
+      "avg_charge_c_rate_30d": 0.03,
+      "avg_soc_after_overnight_ac": 0.02,
+      "charge_session_count_30d": 0.01
+    },
+    "metrics": {},
+    "trained_at": null,
+    "status": "physics_based",
+    "notes": "Coulomb-counting SoH estimation with India grid stability filter (voltage std >2V or first-half/second-half imbalance >3V). Requires MIN_SESSIONS_REQUIRED=5 charge sessions."
   }
 }

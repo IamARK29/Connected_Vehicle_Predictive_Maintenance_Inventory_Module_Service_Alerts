@@ -187,14 +187,18 @@ async def fleet_overview(
 
 _KNOWN_MODELS = [
     # (metrics_store_key, display_name, artifact_files, category)
-    ("brake_wear",        "Brake Wear (XGBoost)",              ["brake_wear_reg.joblib", "brake_wear_clf.joblib"],  "vehicle"),
-    ("engine_oil",        "Engine Oil (XGBoost)",              ["engine_oil_xgb.joblib", "engine_oil_clf.joblib"],  "vehicle"),
-    ("hv_battery_soh",    "HV Battery SoH (XGBoost + Ridge)",  ["hv_battery_lr.joblib",  "hv_battery_clf.joblib"],  "vehicle"),
-    ("battery_12v",       "12V Battery (XGBoost + LR)",        ["battery_12v_xgb.joblib"],                          "vehicle"),
-    ("tyre_wear",         "Tyre Wear (LightGBM)",              ["tyre_wear_lgbm.joblib"],                           "vehicle"),
-    ("fuel_anomaly",      "Fuel Anomaly (IsolationForest)",    ["fuel_anomaly_iso.joblib"],                          "vehicle"),
-    ("driver_score",      "Driver Score (XGBoost)",            ["driver_score_reg.joblib"],                         "vehicle"),
-    ("inventory_demand",  "Inventory Demand (LightGBM)",       ["inventory_demand_30d.joblib"],                     "operational"),
+    ("brake_wear",              "Brake Wear (XGBoost)",                  ["brake_wear_reg.joblib", "brake_wear_clf.joblib"],  "vehicle"),
+    ("engine_oil",              "Engine Oil (XGBoost)",                  ["engine_oil_xgb.joblib", "engine_oil_clf.joblib"],  "vehicle"),
+    ("hv_battery_soh",          "HV Battery SoH (XGBoost + Ridge)",      ["hv_battery_lr.joblib",  "hv_battery_clf.joblib"],  "vehicle"),
+    ("battery_12v",             "12V Battery (XGBoost + LR)",            ["battery_12v_xgb.joblib"],                          "vehicle"),
+    ("tyre_wear",               "Tyre Wear (LightGBM)",                  ["tyre_wear_lgbm.joblib"],                           "vehicle"),
+    ("fuel_anomaly",            "Fuel Anomaly (IsolationForest)",        ["fuel_anomaly_iso.joblib"],                          "vehicle"),
+    ("driver_score",            "Driver Score (XGBoost)",                ["driver_score_reg.joblib"],                         "vehicle"),
+    ("inventory_demand",        "Inventory Demand (LightGBM)",           ["inventory_demand_30d.joblib"],                     "operational"),
+    # EV-only physics/heuristic engines — no .joblib artifact, status="physics_based"
+    ("ev_motor_health",         "EV Motor & Inverter (Physics Engine)",  [],                                                  "vehicle_ev"),
+    ("ev_dcdc_health",          "DC-DC Converter (Physics Engine)",      [],                                                  "vehicle_ev"),
+    ("ev_charging_degradation", "EV Charging Degradation (Coulomb)",     [],                                                  "vehicle_ev"),
 ]
 
 
@@ -289,7 +293,7 @@ async def model_health(
             warnings.append(f"Concordance {concordance:.3f} is near-random (0.5 baseline) — model needs more labelled failure events")
         if cv_auc is not None and cv_auc < 0.60:
             warnings.append(f"AUC-ROC {cv_auc:.3f} is low — consider feature engineering or more training data")
-        if not artifact_exists:
+        if not artifact_exists and status != "physics_based":
             warnings.append("No trained artifact found — run training to produce predictions")
         if not fi_is_real and feature_importances:
             warnings.append("Feature importances are uniform placeholders — retrain to get real SHAP values")
@@ -297,16 +301,19 @@ async def model_health(
 
         result.append(entry)
 
-    trained_count = sum(1 for m in result if m["status"] == "trained")
+    trained_count       = sum(1 for m in result if m["status"] == "trained")
+    physics_count       = sum(1 for m in result if m["status"] == "physics_based")
+    not_trained_count   = sum(1 for m in result if m["status"] == "not_trained")
     concordances = [m["metrics"]["concordance_index"] for m in result if m["metrics"].get("concordance_index") is not None]
     aucs         = [m["metrics"]["cv_auc"] for m in result if m["metrics"].get("cv_auc") is not None]
 
     return {
         "models": result,
         "summary": {
-            "total_models":      len(result),
-            "trained_count":     trained_count,
-            "not_trained_count": len(result) - trained_count,
+            "total_models":       len(result),
+            "trained_count":      trained_count,
+            "physics_count":      physics_count,
+            "not_trained_count":  not_trained_count,
             "avg_concordance":   round(float(np.mean(concordances)), 4) if concordances else None,
             "avg_auc":           round(float(np.mean(aucs)), 4) if aucs else None,
             "metrics_file_exists": METRICS_FILE.exists(),
@@ -577,7 +584,7 @@ class WhatIfRequest(BaseModel):
     odometer_km:            float = 45000.0
     driver_profile:         str   = "urban_commuter"
     fuel_type:              str   = "ICE"
-    model_name:             str   = "MG Hector"
+    model_name:             str   = "Hector"
     days_owned:             int   = 730
     # Driving behaviour
     harsh_braking_per_trip: float = 2.5

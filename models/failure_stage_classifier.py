@@ -73,12 +73,23 @@ class FailureStageClassifier:
         rul_days: float | None,
         rule_flags: dict[str, Any],
         features: dict[str, Any],
+        *,
+        thermal_runaway_risk: str = "NONE",
     ) -> FailureStage:
         """
         Classify a single (failure_type, VIN) into a FailureStage.
 
-        Priority order: CRITICAL > IMMINENT > HIGH_RISK > NOTICEABLE > EARLY > HEALTHY
+        Priority order: thermal_runaway_override > CRITICAL > IMMINENT > HIGH_RISK > NOTICEABLE > EARLY > HEALTHY
+
+        thermal_runaway_risk: result from ThermalRunawayEarlyWarner.classify()["risk_level"].
+            When "CRITICAL" and failure_type == "hv_battery", this overrides all other
+            signals and returns FailureStage.CRITICAL unconditionally.
         """
+        # Safety override: ThermalRunawayEarlyWarner CRITICAL always wins for HV battery.
+        # This check runs before ensemble probability so it cannot be suppressed by model output.
+        if failure_type == "hv_battery" and thermal_runaway_risk == "CRITICAL":
+            return FailureStage.CRITICAL
+
         flags = CRITICAL_RULE_FLAGS.get(failure_type, [])
 
         # CRITICAL: active safety flag OR very high probability OR imminent failure
@@ -126,10 +137,13 @@ class FailureStageClassifier:
         rul_dict: dict[str, float | None],
         rule_flags: dict[str, Any],
         features: dict[str, Any],
+        *,
+        thermal_runaway_risk: str = "NONE",
     ) -> dict[str, FailureStage]:
         """
         Classify all 6 failure types for a VIN in one call.
 
+        thermal_runaway_risk is forwarded only to the hv_battery call.
         Returns {failure_type: FailureStage}.
         """
         return {
@@ -139,6 +153,7 @@ class FailureStageClassifier:
                 rul_dict.get(ft),
                 rule_flags,
                 features,
+                thermal_runaway_risk=thermal_runaway_risk if ft == "hv_battery" else "NONE",
             )
             for ft in _FAILURE_TYPES
         }

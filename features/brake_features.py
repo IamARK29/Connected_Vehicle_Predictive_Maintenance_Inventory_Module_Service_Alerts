@@ -15,7 +15,11 @@ from features.base_pipeline import FeaturePipeline
 from features.derived_utils import (
     detect_harsh_brake,
     compute_brake_stress_index,
+    compute_brake_stress_index_with_glazing,
+    compute_session_start_glazing_factor,
     detect_regen_event,
+    assign_session_ids,
+    _RAIN_HARSH_BRAKE_COEFF,
 )
 
 
@@ -42,8 +46,65 @@ class BrakeFeaturePipeline(FeaturePipeline):
 
         # ── Apply derived utility functions ──────────────────────────────
         df = detect_harsh_brake(df)
-        df = compute_brake_stress_index(df)
         df = detect_regen_event(df)
+
+        # ── Glazing-corrected BSI ─────────────────────────────────────────
+        # Derive park duration and rain intensity from actual vehRainDetected
+        # in the telemetry park window (no hardcoded values).
+        monsoon_glazing_factor = 1.0
+        df_sid = assign_session_ids(df.copy())
+
+        latest_session_id = df_sid["session_id"].dropna().max() if not df_sid["session_id"].dropna().empty else None
+        if pd.notna(latest_session_id):
+            latest_rows = df_sid[df_sid["session_id"] == latest_session_id]
+            session_start_ts = latest_rows["timestamp"].min()
+
+            # Previous driving rows (all sessions before this one)
+            prev_driving = df_sid[
+                df_sid["session_id"].notna() &
+                (df_sid["session_id"] < latest_session_id)
+            ]
+            prev_session_end_ts = prev_driving["timestamp"].max() if not prev_driving.empty else None
+
+            # Park window = off-rows between the end of the previous session and this session start
+            off_mask = df_sid["session_id"].isna() & (df_sid["timestamp"] < session_start_ts)
+            if prev_session_end_ts is not None:
+                off_mask &= df_sid["timestamp"] >= prev_session_end_ts
+            park_rows = df_sid[off_mask]
+
+            if not park_rows.empty and "timestamp" in park_rows.columns:
+                park_duration_h = (
+                    session_start_ts - park_rows["timestamp"].min()
+                ).total_seconds() / 3600.0
+
+                rain_col = next(
+                    (c for c in ("rain_detected", "vehRainDetected") if c in park_rows.columns),
+                    None,
+                )
+                rain_during_park = int(park_rows[rain_col].max()) if rain_col else 0
+
+                humidity_proxy = 0.0
+                if "inside_temp" in park_rows.columns and "outside_temp" in park_rows.columns:
+                    humidity_proxy = float(
+                        (park_rows["inside_temp"] - park_rows["outside_temp"]).abs().mean()
+                    )
+
+                monsoon_glazing_factor = compute_session_start_glazing_factor(
+                    park_duration_h, rain_during_park, humidity_proxy
+                )
+
+        # Apply glazing to the most recent session; base BSI to all other rows.
+        if monsoon_glazing_factor > 1.0:
+            latest_idx  = df_sid[df_sid["session_id"] == latest_session_id].index
+            other_idx   = df_sid.index.difference(latest_idx)
+
+            df_other    = compute_brake_stress_index(df.loc[other_idx].copy())
+            df_latest   = compute_brake_stress_index_with_glazing(
+                df.loc[latest_idx].copy(), monsoon_glazing_factor
+            )
+            df = pd.concat([df_other, df_latest]).sort_index()
+        else:
+            df = compute_brake_stress_index(df)
 
         # ── 7d and 30d windows ────────────────────────────────────────────
         d7  = self._last_days(df, 7)
@@ -79,7 +140,7 @@ class BrakeFeaturePipeline(FeaturePipeline):
             road_type = cfe.road_type({"averageSpeed": float(speed.mean())}, df)
         except Exception:
             pass
-        rain_multiplier = 1.0 + 0.3 * (rain_intensity / 3)
+        rain_multiplier = 1.0 + _RAIN_HARSH_BRAKE_COEFF * (rain_intensity / 3)
         harsh_brake_rate_7d  = round(harsh_brake_rate_7d * rain_multiplier, 4)
         harsh_brake_rate_30d = round(harsh_brake_rate_30d * rain_multiplier, 4)
 
@@ -190,6 +251,7 @@ class BrakeFeaturePipeline(FeaturePipeline):
             "road_type":                          road_type,
             "rain_intensity":                     rain_intensity,
             "elevation_stress":                   elevation_stress,
+            "monsoon_glazing_factor":             monsoon_glazing_factor,
             # Targets
             "days_to_brake_replacement":          days_to_failure,
             "brake_replacement_within_30_days":   within_30,

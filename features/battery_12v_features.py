@@ -15,6 +15,75 @@ import pandas as pd
 from features.base_pipeline import FeaturePipeline
 from features.derived_utils import get_resting_voltage, compute_battery_12v_health_score
 
+# ── TBox parasitic draw constants ─────────────────────────────────────────────
+# The TBox unit draws current continuously while parked.  This draw is EXPECTED
+# and constant regardless of battery health — mixing it into the overnight-drop
+# metric causes the model to over-penalise healthy batteries on long parks.
+
+TBOX_CURRENT_DRAW_MA: dict[str, int] = {
+    "deep_sleep": 15,    # minimal keep-alive, no data being sent
+    "heartbeat":  28,    # periodic position pings, cellular radio active
+    "active":     42,    # OTA in progress or live telemetry streaming
+}
+
+# Lead-acid 45 Ah: ~0.022 V per Ah drained from the 12.6 V resting state.
+# Varies with battery age and temperature; 0.022 is a reasonable mid-point.
+LEAD_ACID_VOLT_DROP_PER_AH: float = 0.022
+
+
+def estimate_tbox_voltage_draw(
+    park_duration_hours: float,
+    avg_cell_signal_dbm: float,
+    battery_age_years: float = 1.0,  # noqa: ARG001 (reserved for future calibration)
+) -> float:
+    """Estimate the voltage contribution of TBox parasitic draw during a park.
+
+    Args:
+        park_duration_hours:  hours the vehicle was parked
+        avg_cell_signal_dbm:  mean cellSignalStrength during park (dBm).
+                              > -85  → heartbeat mode (more draw)
+                              > -100 → light deep-sleep
+                              ≤ -100 → deep sleep (least draw)
+        battery_age_years:    reserved for future age-based calibration
+
+    Returns:
+        Estimated voltage drop attributable to TBox in Volts.
+    """
+    if avg_cell_signal_dbm > -85:
+        draw_ma = TBOX_CURRENT_DRAW_MA["heartbeat"]
+    elif avg_cell_signal_dbm > -100:
+        draw_ma = TBOX_CURRENT_DRAW_MA["deep_sleep"] + 5
+    else:
+        draw_ma = TBOX_CURRENT_DRAW_MA["deep_sleep"]
+
+    charge_consumed_ah = (draw_ma / 1000.0) * park_duration_hours
+    return round(charge_consumed_ah * LEAD_ACID_VOLT_DROP_PER_AH, 4)
+
+
+def compute_overnight_drop_battery_only(
+    raw_overnight_drop_v: float,
+    park_duration_hours: float,
+    avg_cell_signal_dbm: float,
+    battery_age_years: float = 1.0,
+) -> dict[str, float]:
+    """Separate overnight voltage drop into TBox draw and true battery self-discharge.
+
+    Args:
+        raw_overnight_drop_v:  total measured drop (V_at_engine_off − V_at_next_start)
+        park_duration_hours:   hours between the two measurements
+        avg_cell_signal_dbm:   mean cell signal during park (-128 if no signal)
+        battery_age_years:     age of the 12V battery in years
+
+    Returns dict with three keys for use in health scoring and alerts.
+    """
+    tbox_drop = estimate_tbox_voltage_draw(park_duration_hours, avg_cell_signal_dbm, battery_age_years)
+    battery_self_discharge_v = max(0.0, raw_overnight_drop_v - tbox_drop)
+    return {
+        "overnight_drop_total_v":          round(raw_overnight_drop_v, 4),
+        "overnight_drop_tbox_component_v": round(tbox_drop, 4),
+        "overnight_drop_battery_only_v":   round(battery_self_discharge_v, 4),
+    }
+
 
 class Battery12VFeaturePipeline(FeaturePipeline):
 
@@ -67,9 +136,15 @@ class Battery12VFeaturePipeline(FeaturePipeline):
         resting_voltage_7d_avg    = float(resting7.mean())  if len(resting7)  > 0 else np.nan
         resting_voltage_trend_14d = self._slope(resting14)
 
-        # ── Overnight voltage drop ─────────────────────────────────────────
-        # For each OFF→ON transition: voltage at ON_start minus previous ON_end
-        overnight_voltage_drop_avg = _compute_overnight_drop(batt, pwr)
+        # ── Battery age and odometer proxy ────────────────────────────────
+        current_year     = t_max.year if hasattr(t_max, "year") else datetime.now().year
+        battery_age_days = float((current_year - manufacture_year) * 365 + 180)
+        battery_age_years = battery_age_days / 365.0
+        total_km_proxy   = float(odo.iloc[-1]) if len(odo) > 0 else np.nan
+
+        # ── Overnight voltage drop with TBox parasitic separation ─────────
+        overnight_decomposed = _compute_overnight_drop_separated(batt, pwr, df, battery_age_years)
+        overnight_voltage_drop_avg = overnight_decomposed["overnight_drop_total_v"]
 
         # ── Cold cranking voltage dip ──────────────────────────────────────
         # At each startup, capture the minimum voltage in first 5 seconds
@@ -81,11 +156,6 @@ class Battery12VFeaturePipeline(FeaturePipeline):
 
         # ── Parasitic drain rate (V/hour during extended OFF periods) ──────
         parasitic_drain_rate_7d = _compute_parasitic_drain(batt7, pwr7)
-
-        # ── Battery age and odometer proxy ────────────────────────────────
-        current_year   = t_max.year if hasattr(t_max, "year") else datetime.now().year
-        battery_age_days = float((current_year - manufacture_year) * 365 + 180)
-        total_km_proxy   = float(odo.iloc[-1]) if len(odo) > 0 else np.nan
 
         # ── Lights-on engine-off events (7d) — from real TBox light signals ─
         # vehDipLight or vehMainLight = 1 when engine off (SysPwrMod == 0): parasitic drain
@@ -116,9 +186,12 @@ class Battery12VFeaturePipeline(FeaturePipeline):
             cranking_v    = float(voltage_under_load_proxy) if not np.isnan(voltage_under_load_proxy) else 10.5,
             age_years     = battery_age_days / 365.0,
         )
+        # Use battery-only drop in health score so TBox parasitic draw does not
+        # incorrectly degrade the score of a healthy battery on a long park.
+        battery_only_drop = overnight_decomposed["overnight_drop_battery_only_v"]
         health_score = _health_score(
             resting_voltage_7d_avg, resting_voltage_trend_14d,
-            overnight_voltage_drop_avg, cold_voltage_delta,
+            battery_only_drop, cold_voltage_delta,
             parasitic_drain_rate_7d, battery_age_days,
         )
 
@@ -152,6 +225,8 @@ class Battery12VFeaturePipeline(FeaturePipeline):
 
         cold_weather_risk = max(1.0, 1.0 + (10.0 - float(tmp7.fillna(20).mean())) / 10.0) if len(tmp7) > 0 else 1.0
         overnight_drop_avg_7d = overnight_voltage_drop_avg
+        overnight_drop_tbox_v    = overnight_decomposed["overnight_drop_tbox_component_v"]
+        overnight_drop_battery_v = battery_only_drop
 
         # ── Simple aggregate features expected by tests ─────────────────
         batt7_valid = batt7.dropna()
@@ -174,6 +249,8 @@ class Battery12VFeaturePipeline(FeaturePipeline):
             "cold_weather_risk_multiplier":     cold_weather_risk,
             # Legacy / extra
             "overnight_voltage_drop_avg":       overnight_voltage_drop_avg,
+            "overnight_drop_tbox_component_v":  overnight_drop_tbox_v,
+            "overnight_drop_battery_only_v":    overnight_drop_battery_v,
             "cold_voltage_delta":               cold_voltage_delta,
             "voltage_under_load_proxy":         voltage_under_load_proxy,
             "parasitic_drain_rate_7d":          parasitic_drain_rate_7d,
@@ -214,6 +291,83 @@ def _compute_overnight_drop(batt: pd.Series, pwr: pd.Series) -> float:
         if bv_off is not None and bv_on is not None:
             drops.append(float(bv_off - bv_on))
     return float(np.mean(drops)) if drops else 0.0
+
+
+def _compute_overnight_drop_separated(
+    batt: pd.Series,
+    pwr: pd.Series,
+    df: pd.DataFrame,
+    battery_age_years: float = 1.0,
+) -> dict[str, float]:
+    """Decompose each park-period drop into TBox draw and true self-discharge.
+
+    Uses timestamps from df (after _normalize → reset_index) so positional
+    indices from np.where align with df.iloc[i].
+    """
+    _zero = {"overnight_drop_total_v": 0.0, "overnight_drop_tbox_component_v": 0.0,
+              "overnight_drop_battery_only_v": 0.0}
+    if len(pwr) < 2:
+        return _zero
+
+    p_int = (pwr.fillna(-1).values > 0).astype(int)
+    b     = batt.values
+    diff  = np.diff(p_int)
+    off_idx = np.where(diff == -1)[0]
+    on_idx  = np.where(diff ==  1)[0]
+
+    # Timestamps for park duration; fall back if not available
+    ts_arr = df["timestamp"].values if "timestamp" in df.columns else None
+
+    # Cell signal for TBox mode inference; default deep-sleep when absent
+    sig_col  = next((c for c in ("cellSignalStrength", "cell_signal") if c in df.columns), None)
+    sig_vals = df[sig_col].values if sig_col else None
+
+    totals, tbox_drops, batt_drops = [], [], []
+
+    for oi in off_idx:
+        next_on = on_idx[on_idx > oi]
+        if len(next_on) == 0:
+            break
+        ni = next_on[0]
+
+        bv_off = b[oi]     if np.isfinite(b[oi])     else None
+        bv_on  = b[ni + 1] if ni + 1 < len(b) and np.isfinite(b[ni + 1]) else None
+        if bv_off is None or bv_on is None:
+            continue
+        raw_drop = float(bv_off - bv_on)
+
+        # Park duration from timestamps
+        park_h = 8.0  # default: 8-hour overnight assumption
+        if ts_arr is not None:
+            try:
+                t_off = pd.Timestamp(ts_arr[oi])
+                t_on  = pd.Timestamp(ts_arr[min(ni + 1, len(ts_arr) - 1)])
+                park_h = max(0.0, (t_on - t_off).total_seconds() / 3600.0)
+            except Exception:
+                pass
+
+        # Mean cell signal during park window
+        avg_sig = -110.0  # default: deep sleep when signal not available
+        if sig_vals is not None and ni > oi:
+            park_sigs = sig_vals[oi:ni + 1]
+            valid_sigs = park_sigs[np.isfinite(park_sigs.astype(float))]
+            if len(valid_sigs) > 0:
+                avg_sig = float(valid_sigs.mean())
+
+        tbox_drop = estimate_tbox_voltage_draw(park_h, avg_sig, battery_age_years)
+        batt_only = max(0.0, raw_drop - tbox_drop)
+
+        totals.append(raw_drop)
+        tbox_drops.append(tbox_drop)
+        batt_drops.append(batt_only)
+
+    if not totals:
+        return _zero
+    return {
+        "overnight_drop_total_v":          round(float(np.mean(totals)),     4),
+        "overnight_drop_tbox_component_v": round(float(np.mean(tbox_drops)), 4),
+        "overnight_drop_battery_only_v":   round(float(np.mean(batt_drops)), 4),
+    }
 
 
 def _compute_cold_voltage_delta(batt: pd.Series, pwr: pd.Series) -> float:

@@ -423,5 +423,85 @@
     "severity_if_ignored": "LOW",
     "symptom_features": ["axle_imbalance_front"],
     "warranty_typical": false
+  },
+  {
+    "part_name": "Motor Winding Insulation",
+    "part_codes": ["MOTOR WINDING", "WINDING INSULATION", "STATOR WINDING REPAIR"],
+    "category": "Powertrain_EV",
+    "sub_category": "Traction Motor",
+    "failure_modes": ["insulation_breakdown", "inter_turn_short", "partial_discharge", "thermal_degradation"],
+    "related_dtcs": ["P0A3B", "P0A3C", "P0A0F"],
+    "typical_replacement_km": 150000,
+    "variance_km": 50000,
+    "unit_cost_inr": 95000,
+    "labour_hours": 12.0,
+    "linked_parts": ["Inverter IGBT Module"],
+    "ml_model": "ev_motor_health_model",
+    "severity_if_ignored": "CRITICAL",
+    "symptom_features": [
+      "stator_temp_max_30d", "stator_temp_mean_30d",
+      "torque_ripple_proxy_nm", "torque_efficiency_mean_30d"
+    ],
+    "warranty_typical": true
+  },
+  {
+    "part_name": "Inverter IGBT Module",
+    "part_codes": ["INVERTER MODULE", "IGBT MODULE", "POWER ELECTRONICS MODULE"],
+    "category": "Powertrain_EV",
+    "sub_category": "Power Electronics",
+    "failure_modes": ["igbt_gate_failure", "thermal_runaway", "over_voltage_spike", "solder_fatigue"],
+    "related_dtcs": ["P0A94", "P0A78", "P0A7A"],
+    "typical_replacement_km": 200000,
+    "variance_km": 60000,
+    "unit_cost_inr": 185000,
+    "labour_hours": 8.0,
+    "linked_parts": ["Motor Winding Insulation"],
+    "ml_model": "ev_motor_health_model",
+    "severity_if_ignored": "CRITICAL",
+    "symptom_features": [
+      "inv_temp_max_30d", "inv_temp_mean_30d", "inv_temp_per_kw",
+      "torque_efficiency_mean_30d"
+    ],
+    "warranty_typical": true
+  },
+  {
+    "part_name": "DC-DC Converter",
+    "part_codes": ["DC-DC CONVERTER", "DCDC MODULE"],
+    "category": "Powertrain_EV",
+    "sub_category": "Power Electronics",
+    "failure_modes": ["output_voltage_low", "solder_joint_fatigue", "igbt_failure", "thermal_stress", "control_circuit_fault"],
+    "related_dtcs": ["P0A09"],
+    "typical_replacement_km": 160000,
+    "variance_km": 40000,
+    "unit_cost_inr": 45000,
+    "labour_hours": 3.0,
+    "linked_parts": ["12V Battery"],
+    "ml_model": "ev_dcdc_health_model",
+    "severity_if_ignored": "HIGH",
+    "symptom_features": [
+      "dcdc_output_v_mean_30d", "dcdc_output_v_min_30d",
+      "dcdc_temp_max_30d", "high_load_voltage_droop_v"
+    ],
+    "warranty_typical": true
+  },
+  {
+    "part_name": "Motor Bearing Assembly",
+    "part_codes": ["MOTOR BEARING", "TRACTION MOTOR BEARING", "DRIVE MOTOR BEARING"],
+    "category": "Powertrain_EV",
+    "sub_category": "Traction Motor",
+    "failure_modes": ["pitting", "spalling", "electrical_erosion", "lubrication_failure"],
+    "related_dtcs": ["P0A3F"],
+    "typical_replacement_km": 120000,
+    "variance_km": 40000,
+    "unit_cost_inr": 28000,
+    "labour_hours": 6.0,
+    "linked_parts": ["Motor Winding Insulation"],
+    "ml_model": "ev_motor_health_model",
+    "severity_if_ignored": "HIGH",
+    "symptom_features": [
+      "torque_ripple_proxy_nm", "motor_rpm_deviation_mean",
+      "torque_efficiency_mean_30d"
+    ],
+    "warranty_typical": false
   }
 ]

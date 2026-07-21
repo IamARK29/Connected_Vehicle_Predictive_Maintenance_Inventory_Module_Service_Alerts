@@ -5,10 +5,13 @@ import { HealthGauge } from '../components/HealthGauge'
 import { AlertBadge } from '../components/AlertBadge'
 import { TelemetryChart } from '../components/TelemetryChart'
 import { PredictionCard } from '../components/PredictionCard'
+import { EVHealthPanel } from '../components/EVHealthPanel'
 import type { Alert, MLPrediction, ServiceRecord } from '../types'
 
-const TABS = ['Health Overview', 'Live Telemetry', 'Predictions', 'Service History', 'Driver Score'] as const
-type Tab = typeof TABS[number]
+const EV_FUEL_TYPES = new Set(['EV', 'PHEV', 'BEV'])
+
+type Tab = 'Health Overview' | 'Live Telemetry' | 'Predictions' | 'Service History' | 'Driver Score' | 'EV Systems'
+const BASE_TABS: Tab[] = ['Health Overview', 'Live Telemetry', 'Predictions', 'Service History', 'Driver Score']
 
 function Row({ label, value, unit }: { label: string; value: unknown; unit?: string }) {
   const display = value == null || value === '' ? '—' : `${value}${unit ?? ''}`
@@ -20,77 +23,114 @@ function Row({ label, value, unit }: { label: string; value: unknown; unit?: str
   )
 }
 
+function scoreLabel(s: number) {
+  if (s >= 80) return { text: 'Good',     cls: 'text-green-600 bg-green-50  border-green-200' }
+  if (s >= 60) return { text: 'Fair',     cls: 'text-amber-600 bg-amber-50  border-amber-200' }
+  if (s >= 40) return { text: 'Poor',     cls: 'text-orange-600 bg-orange-50 border-orange-200' }
+  return              { text: 'Critical', cls: 'text-red-600   bg-red-50    border-red-200'   }
+}
+
+function severityConfig(sev: string) {
+  switch (sev?.toLowerCase()) {
+    case 'critical': return { dot: 'bg-red-500',    border: 'border-red-200',    bg: 'bg-red-50'   }
+    case 'high':     return { dot: 'bg-orange-500', border: 'border-orange-200', bg: 'bg-orange-50'}
+    case 'medium':   return { dot: 'bg-yellow-500', border: 'border-yellow-200', bg: 'bg-yellow-50'}
+    default:         return { dot: 'bg-blue-500',   border: 'border-blue-200',   bg: 'bg-blue-50'  }
+  }
+}
+
 function HealthOverview({ vin }: { vin: string }) {
   const { data: vehicle, isLoading: vehicleLoading }  = useVehicle(vin)
   const { data: alertsRaw } = useVehicleAlerts(vin)
   const alerts = (Array.isArray(alertsRaw) ? alertsRaw : (alertsRaw as any)?.alerts ?? []) as Alert[]
   const score = vehicle?.health_score != null ? Number(vehicle.health_score) : null
   const v = vehicle ?? {}
+  const label = score != null ? scoreLabel(score) : null
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* Health gauge */}
-      <div className="card flex flex-col items-center justify-center gap-4 py-6">
+      <div className="card flex flex-col items-center justify-center gap-3 py-8">
         {vehicleLoading || score === null ? (
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-[140px] h-[140px] rounded-full border-[10px] border-gray-100 animate-pulse" />
-            <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
-          </div>
+          <>
+            <div className="w-40 h-40 rounded-full border-[10px] border-gray-100 animate-pulse" />
+            <div className="h-4 w-28 bg-gray-100 rounded animate-pulse" />
+          </>
         ) : (
           <>
-            <HealthGauge value={score} size={140} />
-            <div className="text-center">
-              <p className="text-sm font-semibold text-gray-700">Overall Health</p>
-              <p className="text-xs text-gray-400 mt-0.5">
-                {score >= 80 ? 'Vehicle in good condition' : score >= 60 ? 'Maintenance recommended' : 'Immediate attention required'}
-              </p>
-            </div>
+            <HealthGauge value={score} size={160} />
+            <p className="text-sm font-semibold text-gray-700 -mt-1">Overall Health</p>
+            <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${label!.cls}`}>
+              {label!.text} condition
+            </span>
           </>
         )}
       </div>
 
       {/* Vehicle details */}
       <div className="card">
-        <h3 className="font-semibold text-gray-900 mb-3">Vehicle Info</h3>
-        <Row label="Model"              value={v.model_name} />
-        <Row label="Fuel Type"          value={v.fuel_type} />
-        <Row label="Year"               value={v.manufacture_year} />
-        <Row label="Odometer"           value={v.current_odometer_km ?? v.odometer_km} unit=" km" />
-        <Row label="Color"              value={v.color} />
-        <Row label="Dealer"             value={[v.dealer_code, v.dealer_city ? `(${v.dealer_city})` : ''].filter(Boolean).join(' ') || undefined} />
-        <Row label="Driver Profile"     value={v.driver_profile?.replace(/_/g, ' ')} />
-        <Row label="Last Seen"          value={v.last_seen ? new Date(v.last_seen).toLocaleString() : undefined} />
+        <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+          <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Vehicle Info
+        </h3>
+        <Row label="Model"          value={v.model_name} />
+        <Row label="Fuel Type"      value={v.fuel_type} />
+        <Row label="Year"           value={v.manufacture_year} />
+        <Row label="Odometer"       value={v.current_odometer_km ?? v.odometer_km} unit=" km" />
+        <Row label="Color"          value={v.color} />
+        <Row label="Dealer"         value={[v.dealer_code, v.dealer_city ? `(${v.dealer_city})` : ''].filter(Boolean).join(' ') || undefined} />
+        <Row label="Driver Profile" value={v.driver_profile?.replace(/_/g, ' ')} />
+        <Row label="Last Seen"      value={v.last_seen ? new Date(v.last_seen).toLocaleString() : undefined} />
       </div>
 
       {/* Active alerts */}
       <div className="card">
-        <h3 className="font-semibold text-gray-900 mb-3">
+        <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+          <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
           Active Alerts
           {alerts.length > 0 && (
-            <span className="ml-2 text-xs text-red-600 font-bold">({alerts.length})</span>
+            <span className="ml-auto text-xs font-bold text-white bg-red-500 rounded-full px-2 py-0.5">{alerts.length}</span>
           )}
         </h3>
         {alerts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-6 text-gray-400">
-            <span className="text-3xl mb-2">✅</span>
-            <p className="text-sm">No active alerts</p>
+          <div className="flex flex-col items-center justify-center py-8 text-gray-400 gap-2">
+            <svg className="w-10 h-10 text-green-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm font-medium text-gray-500">No active alerts</p>
+            <p className="text-xs text-gray-400">Vehicle operating normally</p>
           </div>
         ) : (
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {alerts.map((a, i) => (
-              <div key={i} className="p-3 rounded-lg border border-gray-200 bg-gray-50">
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <p className="text-xs font-semibold text-gray-800">{a.title}</p>
-                  <AlertBadge severity={a.severity} />
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+            {alerts.map((a, i) => {
+              const sc = severityConfig(a.severity)
+              return (
+                <div key={i} className={`p-3 rounded-lg border ${sc.border} ${sc.bg}`}>
+                  <div className="flex items-start gap-2 mb-1">
+                    <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${sc.dot}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-1">
+                        <p className="text-xs font-semibold text-gray-800 leading-snug">{a.title}</p>
+                        <AlertBadge severity={a.severity} />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{a.message_customer}</p>
+                      {(a.estimated_cost_min || a.estimated_cost_max) && (
+                        <p className="text-xs text-gray-400 mt-1 font-mono">
+                          ₹{a.estimated_cost_min?.toLocaleString('en-IN')} – ₹{a.estimated_cost_max?.toLocaleString('en-IN')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <p className="text-xs text-gray-500 line-clamp-2">{a.message_customer}</p>
-                {(a.estimated_cost_min || a.estimated_cost_max) && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    Est. ₹{a.estimated_cost_min?.toLocaleString('en-IN')} – ₹{a.estimated_cost_max?.toLocaleString('en-IN')}
-                  </p>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -230,6 +270,9 @@ export default function VehicleDetail() {
 
   if (!vin) return <div className="p-6 text-gray-400">Invalid VIN</div>
 
+  const isEV = EV_FUEL_TYPES.has((vehicle?.fuel_type ?? '').toUpperCase())
+  const tabs: Tab[] = isEV ? [...BASE_TABS, 'EV Systems'] : BASE_TABS
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -242,28 +285,46 @@ export default function VehicleDetail() {
             {vehicle?.model_name ?? 'Vehicle'}
             {vehicle?.license_plate ? <span className="text-gray-400 font-normal"> · {vehicle.license_plate}</span> : null}
           </h1>
-          <p className="text-gray-400 font-mono text-xs mt-0.5">{vin}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-gray-400 font-mono text-xs">{vin}</p>
+            {isEV && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 uppercase tracking-wide">
+                {vehicle?.fuel_type}
+              </span>
+            )}
+          </div>
         </div>
         {vehicle?.health_score != null && (
-          <div className="card p-3">
-            <HealthGauge value={Number(vehicle.health_score)} size={64} label="Health" />
+          <div className="card px-4 py-3 flex items-center gap-3">
+            <HealthGauge value={Number(vehicle.health_score)} size={76} />
+            <div className="flex flex-col gap-0.5">
+              <p className="text-xs text-gray-400 font-medium uppercase tracking-wide whitespace-nowrap">Health</p>
+              <p className={`text-sm font-bold ${scoreLabel(Number(vehicle.health_score)).cls.split(' ')[0]}`}>
+                {scoreLabel(Number(vehicle.health_score)).text}
+              </p>
+            </div>
           </div>
         )}
       </div>
 
       {/* Tabs */}
       <div className="border-b border-gray-200">
-        <div className="flex gap-1">
-          {TABS.map(tab => (
+        <div className="flex gap-1 overflow-x-auto">
+          {tabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
                 activeTab === tab
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
+              {tab === 'EV Systems' && (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              )}
               {tab}
             </button>
           ))}
@@ -282,6 +343,7 @@ export default function VehicleDetail() {
         {activeTab === 'Predictions' && <Predictions vin={vin} />}
         {activeTab === 'Service History' && <ServiceHistory vin={vin} />}
         {activeTab === 'Driver Score' && <DriverScore vin={vin} />}
+        {activeTab === 'EV Systems' && <EVHealthPanel vin={vin} />}
       </div>
     </div>
   )

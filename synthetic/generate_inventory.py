@@ -20,22 +20,22 @@ DATA_DIR = Path("data/synthetic")
 # ── Parts catalogue (matches dealer.py _PARTS_META) ──────────────────────────
 PARTS = {
     "OIL-5W30-4L":     {"description": "Engine Oil 5W-30 (4L)",          "unit_cost": 855,    "lead_days": 2,  "abc": "A", "fuel_types": {"ICE","PHEV"}, "replace_km": 7500,  "qty_per_svc": 1},
-    "OIL-FILTER-MG":   {"description": "Oil Filter — MG OEM",            "unit_cost": 183,    "lead_days": 3,  "abc": "A", "fuel_types": {"ICE","PHEV"}, "replace_km": 7500,  "qty_per_svc": 1},
-    "BR-PAD-F-MG":     {"description": "Brake Pads Front — MG OEM",      "unit_cost": 2800,   "lead_days": 5,  "abc": "A", "fuel_types": None,           "replace_km": 30000, "qty_per_svc": 1},
-    "BR-PAD-R-MG":     {"description": "Brake Pads Rear — MG OEM",       "unit_cost": 2200,   "lead_days": 5,  "abc": "A", "fuel_types": None,           "replace_km": 35000, "qty_per_svc": 1},
+    "OIL-FILTER-MG":   {"description": "Oil Filter — OEM",            "unit_cost": 183,    "lead_days": 3,  "abc": "A", "fuel_types": {"ICE","PHEV"}, "replace_km": 7500,  "qty_per_svc": 1},
+    "BR-PAD-F-MG":     {"description": "Brake Pads Front — OEM",      "unit_cost": 2800,   "lead_days": 5,  "abc": "A", "fuel_types": None,           "replace_km": 30000, "qty_per_svc": 1},
+    "BR-PAD-R-MG":     {"description": "Brake Pads Rear — OEM",       "unit_cost": 2200,   "lead_days": 5,  "abc": "A", "fuel_types": None,           "replace_km": 35000, "qty_per_svc": 1},
     "BR-FLUID-DOT4":   {"description": "Brake Fluid DOT 4 (500ml)",       "unit_cost": 380,    "lead_days": 3,  "abc": "B", "fuel_types": None,           "replace_km": 60000, "qty_per_svc": 1},
     "TYRE-215-60-17":  {"description": "Tyre 215/60 R17",                 "unit_cost": 6500,   "lead_days": 7,  "abc": "B", "fuel_types": None,           "replace_km": 50000, "qty_per_svc": 4},
     "TYRE-225-55-18":  {"description": "Tyre 225/55 R18",                 "unit_cost": 7800,   "lead_days": 7,  "abc": "B", "fuel_types": None,           "replace_km": 50000, "qty_per_svc": 4},
     "BATT-12V-60AH":   {"description": "12V Battery 60Ah",                "unit_cost": 4500,   "lead_days": 3,  "abc": "A", "fuel_types": None,           "replace_km": None,  "qty_per_svc": 1},
     "BATT-12V-70AH":   {"description": "12V Battery 70Ah",                "unit_cost": 5200,   "lead_days": 3,  "abc": "A", "fuel_types": None,           "replace_km": None,  "qty_per_svc": 1},
     "COOLANT-1L":      {"description": "Engine Coolant (1L)",              "unit_cost": 350,    "lead_days": 3,  "abc": "B", "fuel_types": {"ICE","PHEV"}, "replace_km": 60000, "qty_per_svc": 3},
-    "AIR-FILTER-MG":   {"description": "Air Filter — MG OEM",             "unit_cost": 420,    "lead_days": 3,  "abc": "B", "fuel_types": None,           "replace_km": 30000, "qty_per_svc": 1},
+    "AIR-FILTER-MG":   {"description": "Air Filter — OEM",             "unit_cost": 420,    "lead_days": 3,  "abc": "B", "fuel_types": None,           "replace_km": 30000, "qty_per_svc": 1},
     "SPARK-PLUG-NGK":  {"description": "Spark Plugs NGK (set of 4)",      "unit_cost": 1850,   "lead_days": 5,  "abc": "B", "fuel_types": {"ICE"},        "replace_km": 60000, "qty_per_svc": 1},
-    "HV-MODULE-MG":    {"description": "HV Battery Module — MG ZS EV",   "unit_cost": 185000, "lead_days": 21, "abc": "A", "fuel_types": {"EV","PHEV"},  "replace_km": None,  "qty_per_svc": 1},
+    "HV-MODULE-MG":    {"description": "HV Battery Module — ZS EV",   "unit_cost": 185000, "lead_days": 21, "abc": "A", "fuel_types": {"EV","PHEV"},  "replace_km": None,  "qty_per_svc": 1},
     "BMS-FUSE-MG":     {"description": "BMS Fuse Assembly — MG",          "unit_cost": 2800,   "lead_days": 14, "abc": "B", "fuel_types": {"EV","PHEV"},  "replace_km": None,  "qty_per_svc": 1},
-    "WIPER-BLADE-MG":  {"description": "Wiper Blade Set — MG OEM",        "unit_cost": 650,    "lead_days": 2,  "abc": "C", "fuel_types": None,           "replace_km": 20000, "qty_per_svc": 1},
-    "CABIN-FILTER-MG": {"description": "Cabin Air Filter — MG OEM",       "unit_cost": 780,    "lead_days": 3,  "abc": "C", "fuel_types": None,           "replace_km": 20000, "qty_per_svc": 1},
-    "THERMOSTAT-MG":   {"description": "Engine Thermostat — MG OEM",      "unit_cost": 1200,   "lead_days": 10, "abc": "C", "fuel_types": {"ICE","PHEV"}, "replace_km": None,  "qty_per_svc": 1},
+    "WIPER-BLADE-MG":  {"description": "Wiper Blade Set — OEM",        "unit_cost": 650,    "lead_days": 2,  "abc": "C", "fuel_types": None,           "replace_km": 20000, "qty_per_svc": 1},
+    "CABIN-FILTER-MG": {"description": "Cabin Air Filter — OEM",       "unit_cost": 780,    "lead_days": 3,  "abc": "C", "fuel_types": None,           "replace_km": 20000, "qty_per_svc": 1},
+    "THERMOSTAT-MG":   {"description": "Engine Thermostat — OEM",      "unit_cost": 1200,   "lead_days": 10, "abc": "C", "fuel_types": {"ICE","PHEV"}, "replace_km": None,  "qty_per_svc": 1},
     "OBD-HARNESS-MG":  {"description": "OBD Diagnostic Harness",          "unit_cost": 3500,   "lead_days": 7,  "abc": "C", "fuel_types": None,           "replace_km": None,  "qty_per_svc": 1},
 }
 
@@ -229,17 +229,17 @@ def main() -> None:
 
 def _supplier(part_code: str) -> str:
     m = {
-        "OIL-5W30-4L": "Castrol India", "OIL-FILTER-MG": "MG OEM Direct",
-        "BR-PAD-F-MG": "MG OEM Direct", "BR-PAD-R-MG": "MG OEM Direct",
+        "OIL-5W30-4L": "Castrol India", "OIL-FILTER-MG": "OEM Direct",
+        "BR-PAD-F-MG": "OEM Direct", "BR-PAD-R-MG": "OEM Direct",
         "BR-FLUID-DOT4": "TotalEnergies", "TYRE-215-60-17": "MRF",
         "TYRE-225-55-18": "Apollo Tyres", "BATT-12V-60AH": "Amaron",
-        "BATT-12V-70AH": "Exide", "COOLANT-1L": "MG OEM Direct",
-        "AIR-FILTER-MG": "MG OEM Direct", "SPARK-PLUG-NGK": "NGK India",
-        "HV-MODULE-MG": "MG OEM Direct", "BMS-FUSE-MG": "MG OEM Direct",
-        "WIPER-BLADE-MG": "MG OEM Direct", "CABIN-FILTER-MG": "MG OEM Direct",
-        "THERMOSTAT-MG": "MG OEM Direct", "OBD-HARNESS-MG": "MG OEM Direct",
+        "BATT-12V-70AH": "Exide", "COOLANT-1L": "OEM Direct",
+        "AIR-FILTER-MG": "OEM Direct", "SPARK-PLUG-NGK": "NGK India",
+        "HV-MODULE-MG": "OEM Direct", "BMS-FUSE-MG": "OEM Direct",
+        "WIPER-BLADE-MG": "OEM Direct", "CABIN-FILTER-MG": "OEM Direct",
+        "THERMOSTAT-MG": "OEM Direct", "OBD-HARNESS-MG": "OEM Direct",
     }
-    return m.get(part_code, "MG OEM Direct")
+    return m.get(part_code, "OEM Direct")
 
 
 def _svc_types(part_code: str) -> str:

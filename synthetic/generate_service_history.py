@@ -334,7 +334,7 @@ def _pick_dealer(vrow: pd.Series, cfg: SyntheticConfig, rng: random.Random) -> d
             home_dealer = {"code": d.code, "name": d.name, "city": d.city, "region": d.region}
             break
     else:
-        home_dealer = {"code": "DL001", "name": "MG Motors New Delhi", "city": "New Delhi", "region": "North"}
+        home_dealer = {"code": "DL001", "name": "AutoPredict New Delhi", "city": "New Delhi", "region": "North"}
 
     if rng.random() < 0.70:
         return home_dealer

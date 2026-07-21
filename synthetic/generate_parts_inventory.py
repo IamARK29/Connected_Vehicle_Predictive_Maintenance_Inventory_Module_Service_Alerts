@@ -15,18 +15,18 @@ import pandas as pd
 
 _PARTS_META = [
     {"part_code": "OIL-5W30-4L",    "description": "Engine Oil 5W-30 (4L)",            "unit_cost_inr": 855,   "abc_class": "A", "lead_time_days": 2,  "supplier": "Castrol / Mobil",   "replace_km": 7500,  "per_service_qty": 1},
-    {"part_code": "OIL-FILTER-MG",   "description": "Oil Filter — MG OEM",              "unit_cost_inr": 183,   "abc_class": "A", "lead_time_days": 3,  "supplier": "MG OEM Direct",     "replace_km": 7500,  "per_service_qty": 1},
-    {"part_code": "BR-PAD-F-MG",     "description": "Brake Pads (Front) — MG OEM",      "unit_cost_inr": 2800,  "abc_class": "A", "lead_time_days": 5,  "supplier": "MG OEM Direct",     "replace_km": 30000, "per_service_qty": 1},
-    {"part_code": "BR-PAD-R-MG",     "description": "Brake Pads (Rear) — MG OEM",       "unit_cost_inr": 2200,  "abc_class": "A", "lead_time_days": 5,  "supplier": "MG OEM Direct",     "replace_km": 35000, "per_service_qty": 1},
+    {"part_code": "OIL-FILTER-MG",   "description": "Oil Filter — OEM",              "unit_cost_inr": 183,   "abc_class": "A", "lead_time_days": 3,  "supplier": "OEM Direct",     "replace_km": 7500,  "per_service_qty": 1},
+    {"part_code": "BR-PAD-F-MG",     "description": "Brake Pads (Front) — OEM",      "unit_cost_inr": 2800,  "abc_class": "A", "lead_time_days": 5,  "supplier": "OEM Direct",     "replace_km": 30000, "per_service_qty": 1},
+    {"part_code": "BR-PAD-R-MG",     "description": "Brake Pads (Rear) — OEM",       "unit_cost_inr": 2200,  "abc_class": "A", "lead_time_days": 5,  "supplier": "OEM Direct",     "replace_km": 35000, "per_service_qty": 1},
     {"part_code": "BR-FLUID-DOT4",   "description": "Brake Fluid DOT 4 (500ml)",         "unit_cost_inr": 380,   "abc_class": "B", "lead_time_days": 3,  "supplier": "Castrol / Bosch",   "replace_km": 40000, "per_service_qty": 1},
-    {"part_code": "TYRE-MG-195-55",  "description": "Tyre 195/55 R16 (MG Astor/Hector)", "unit_cost_inr": 4200, "abc_class": "A", "lead_time_days": 7,  "supplier": "MRF / Apollo",      "replace_km": 50000, "per_service_qty": 4},
-    {"part_code": "AIR-FILTER-MG",   "description": "Air Filter — MG OEM",              "unit_cost_inr": 590,   "abc_class": "B", "lead_time_days": 4,  "supplier": "MG OEM Direct",     "replace_km": 15000, "per_service_qty": 1},
+    {"part_code": "TYRE-MG-195-55",  "description": "Tyre 195/55 R16 (MG SUV/Crossover)", "unit_cost_inr": 4200, "abc_class": "A", "lead_time_days": 7,  "supplier": "MRF / Apollo",      "replace_km": 50000, "per_service_qty": 4},
+    {"part_code": "AIR-FILTER-MG",   "description": "Air Filter — OEM",              "unit_cost_inr": 590,   "abc_class": "B", "lead_time_days": 4,  "supplier": "OEM Direct",     "replace_km": 15000, "per_service_qty": 1},
     {"part_code": "BATT-12V-MF60",   "description": "12V Battery 60Ah MF (Hector/Astor)", "unit_cost_inr": 4800, "abc_class": "A", "lead_time_days": 2, "supplier": "Amaron / Exide",    "replace_km": None,  "per_service_qty": 1},
-    {"part_code": "COOLANT-OAT-1L",  "description": "Engine Coolant OAT (1L)",           "unit_cost_inr": 320,   "abc_class": "C", "lead_time_days": 2,  "supplier": "MG OEM Direct",     "replace_km": 60000, "per_service_qty": 3},
+    {"part_code": "COOLANT-OAT-1L",  "description": "Engine Coolant OAT (1L)",           "unit_cost_inr": 320,   "abc_class": "C", "lead_time_days": 2,  "supplier": "OEM Direct",     "replace_km": 60000, "per_service_qty": 3},
     {"part_code": "WIPER-B-MG",      "description": "Wiper Blade Bosch Rear — MG",       "unit_cost_inr": 450,   "abc_class": "C", "lead_time_days": 3,  "supplier": "Bosch India",       "replace_km": None,  "per_service_qty": 2},
-    {"part_code": "HV-MODULE-MG",    "description": "HV Battery Module (ZS EV)",         "unit_cost_inr": 95000, "abc_class": "A", "lead_time_days": 21, "supplier": "MG OEM Direct",     "replace_km": None,  "per_service_qty": 1},
-    {"part_code": "BMS-FUSE-MG",     "description": "BMS Safety Fuse 200A (EV)",         "unit_cost_inr": 1200,  "abc_class": "B", "lead_time_days": 10, "supplier": "MG OEM Direct",     "replace_km": None,  "per_service_qty": 1},
-    {"part_code": "THERMOSTAT-MG",   "description": "Engine Thermostat — MG Hector",     "unit_cost_inr": 980,   "abc_class": "C", "lead_time_days": 7,  "supplier": "MG OEM Direct",     "replace_km": 80000, "per_service_qty": 1},
+    {"part_code": "HV-MODULE-MG",    "description": "HV Battery Module (ZS EV)",         "unit_cost_inr": 95000, "abc_class": "A", "lead_time_days": 21, "supplier": "OEM Direct",     "replace_km": None,  "per_service_qty": 1},
+    {"part_code": "BMS-FUSE-MG",     "description": "BMS Safety Fuse 200A (EV)",         "unit_cost_inr": 1200,  "abc_class": "B", "lead_time_days": 10, "supplier": "OEM Direct",     "replace_km": None,  "per_service_qty": 1},
+    {"part_code": "THERMOSTAT-MG",   "description": "Engine Thermostat — Hector",     "unit_cost_inr": 980,   "abc_class": "C", "lead_time_days": 7,  "supplier": "OEM Direct",     "replace_km": 80000, "per_service_qty": 1},
 ]
 
 

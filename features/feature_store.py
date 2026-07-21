@@ -50,6 +50,12 @@ FEATURE_GROUPS: dict[str, list[str]] = {
         "isolation_resistance_min_30d", "range_per_kwh_30d_trend",
         "thermal_fault_count_30d", "busbar_resistance_proxy",
         "charge_c_rate_avg_30d",
+        # EV charging session features (EVChargingFeatureEngine)
+        "charge_acceptance_ratio", "charge_acceptance_trend_30d",
+        "charge_duration_deviation_pct", "end_voltage_deficit_v",
+        "dc_fraction_30d", "avg_soc_at_charge_start",
+        "avg_soc_after_overnight_ac", "total_charge_sessions_30d",
+        "dc_charge_sessions_30d",
     ],
     "battery_12v": [
         "resting_voltage_7d_avg", "resting_voltage_trend_14d",
@@ -74,11 +80,28 @@ FEATURE_GROUPS: dict[str, list[str]] = {
         "weekly_score_trend", "peer_percentile",
         "fuel_consumption_deviation_pct", "idle_fuel_waste_L_30d",
         "hvac_load_factor", "upshift_rpm_avg", "engine_braking_ratio",
+        # EV cost features (EVCostFeatureEngine — None for ICE vehicles)
+        "cost_per_km_inr", "kwh_per_km", "total_charging_cost_inr_30d",
+        "energy_wasted_kwh_30d", "energy_waste_cost_inr_30d",
+        "dc_charge_premium_inr_30d", "projected_cost_per_km_at_80pct_soh",
+        "home_vs_dc_cost_difference",
     ],
     "vehicle_state": [
         "current_odometer_km", "fuel_level_pct", "soc_pct",
         "is_charging", "power_mode", "last_seen_timestamp",
         "is_ev", "battery_capacity_kwh",
+    ],
+    "ev_motor": [
+        "torque_efficiency_mean_30d",
+        "inv_temp_max_30d", "inv_temp_mean_30d", "inv_temp_per_kw",
+        "stator_temp_max_30d", "stator_temp_mean_30d",
+        "torque_ripple_proxy_nm", "motor_rpm_deviation_mean",
+    ],
+    "ev_dcdc": [
+        "dcdc_output_v_mean_30d", "dcdc_output_v_min_30d",
+        "dcdc_temp_max_30d", "dcdc_temp_mean_30d",
+        "high_load_voltage_droop_v", "dcdc_startup_recovery_v",
+        "dcdc_thermal_cycles_total",
     ],
 }
 
@@ -91,6 +114,8 @@ _MODEL_FEATURE_GROUPS: dict[str, list[str]] = {
     "tyre_wear":      ["tyre", "vehicle_state"],
     "driver_score":   ["driver", "vehicle_state"],
     "fuel_anomaly":   ["engine", "driver", "vehicle_state"],
+    "ev_motor_health": ["ev_motor", "battery_hv", "vehicle_state"],
+    "ev_dcdc_health":  ["ev_dcdc", "battery_hv", "vehicle_state"],
 }
 
 

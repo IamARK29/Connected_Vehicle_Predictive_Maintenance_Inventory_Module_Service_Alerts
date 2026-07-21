@@ -47,6 +47,8 @@ class VehicleTwin:
     soc_pct: float = 0.0
     battery_12v_v: float = 0.0
     coolant_temp_c: float = 0.0
+    outside_temp_c: float = 25.0
+    ac_is_on: bool = False
     is_charging: bool = False
     gps_lat: float = 0.0
     gps_lon: float = 0.0
@@ -64,6 +66,8 @@ class VehicleTwin:
     failure_stages: dict = field(default_factory=dict)
     rul_days: dict = field(default_factory=dict)
     next_predicted_service: dict = field(default_factory=dict)
+    predicted_range_km: float = 0.0
+    range_anxiety_flag: bool = False
 
     # ── ALERTS & DTC ─────────────────────────────────────────────────────────
     active_alerts: list = field(default_factory=list)
@@ -179,14 +183,42 @@ class TwinManager:
             if "vehCoolantTemp" in decoded_payload:
                 twin.coolant_temp_c = float(decoded_payload["vehCoolantTemp"])
 
-        elif channel_id in (19, 20):
+        elif channel_id in (19, 20, 21):
             if "vehBMSPackSOC" in decoded_payload:
                 twin.soc_pct = float(decoded_payload["vehBMSPackSOC"])
             if "chargeRemainTime" in decoded_payload:
                 twin.is_charging = float(decoded_payload["chargeRemainTime"]) > 0
+            # Update range estimate whenever SoC changes (EV/PHEV only)
+            if twin.fuel_type in ("EV", "PHEV", "BEV") and twin.soc_pct > 0:
+                try:
+                    from models.range_anxiety_model import RangeAnxietyPredictor
+                    fs_features = {
+                        "soh_estimated":           twin.hv_battery_soh_pct or 100.0,
+                        "composite_drive_score":   twin.composite_drive_score or 70.0,
+                        "km_per_day_30d_avg":      twin.km_per_day_30d_avg or 40.0,
+                    }
+                    fleet_row = {
+                        "rated_range_km":      twin.rated_range_km,
+                        "battery_capacity_kwh": twin.battery_capacity_kwh,
+                    }
+                    result = RangeAnxietyPredictor().predict(
+                        vin=vin,
+                        current_soc_pct=twin.soc_pct,
+                        current_outside_temp_c=twin.outside_temp_c,
+                        ac_is_on=twin.ac_is_on,
+                        feature_store_features=fs_features,
+                        fleet_row=fleet_row,
+                    )
+                    twin.predicted_range_km = float(result["predicted_range_km"])
+                    twin.range_anxiety_flag = bool(result["range_anxiety_flag"])
+                except Exception as exc:
+                    log.debug("Range predictor failed for %s: %s", vin, exc)
 
         elif channel_id == 23:
             outside_temp = decoded_payload.get("vehOutsideTemp", 25.0)
+            twin.outside_temp_c = float(outside_temp)
+            if "vehAcStatus" in decoded_payload:
+                twin.ac_is_on = bool(decoded_payload["vehAcStatus"])
             pressures = {}
             _TYRE_MAP = {
                 "frontLeftTyrePressure": "fl",

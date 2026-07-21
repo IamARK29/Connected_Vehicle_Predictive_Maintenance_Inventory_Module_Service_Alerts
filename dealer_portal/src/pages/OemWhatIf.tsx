@@ -11,7 +11,7 @@ const DRIVER_PROFILES = [
   'hill_region', 'aggressive', 'taxi_fleet', 'delivery_driver',
 ]
 const FUEL_TYPES  = ['ICE', 'EV', 'PHEV', 'CNG']
-const MODEL_NAMES = ['MG Hector', 'MG ZS EV', 'MG Astor', 'MG Comet EV', 'MG Gloster', 'MG Windsor']
+const MODEL_NAMES = ['Hector', 'ZS EV', 'Astor', 'Comet EV', 'Gloster', 'Windsor']
 
 const SEVERITY_STYLES: Record<string, string> = {
   HIGH:   'bg-red-50 border-red-300 text-red-800',
@@ -203,7 +203,7 @@ const DEFAULT_PARAMS = {
   odometer_km: 45000,
   driver_profile: 'urban_commuter',
   fuel_type: 'ICE',
-  model_name: 'MG Hector',
+  model_name: 'Hector',
   days_owned: 730,
   harsh_braking_per_trip: 2.5,
   idle_fraction: 0.15,
@@ -434,17 +434,17 @@ export default function OemWhatIf() {
                 <div className="flex flex-wrap gap-2">
                   {[
                     { label: 'High Mileage',
-                      params: { fuel_type: 'ICE', model_name: 'MG Hector', odometer_km: 150000, days_owned: 2000, battery_age_months: 36 } },
+                      params: { fuel_type: 'ICE', model_name: 'Hector', odometer_km: 150000, days_owned: 2000, battery_age_months: 36 } },
                     { label: 'Aggressive',
-                      params: { fuel_type: 'ICE', model_name: 'MG Hector', driver_profile: 'aggressive', harsh_braking_per_trip: 12, overspeed_fraction: 0.45, idle_fraction: 0.2 } },
+                      params: { fuel_type: 'ICE', model_name: 'Hector', driver_profile: 'aggressive', harsh_braking_per_trip: 12, overspeed_fraction: 0.45, idle_fraction: 0.2 } },
                     { label: 'Old 12V Battery',
-                      params: { fuel_type: 'ICE', model_name: 'MG Astor', battery_age_months: 60, short_trip_fraction: 0.6 } },
+                      params: { fuel_type: 'ICE', model_name: 'Astor', battery_age_months: 60, short_trip_fraction: 0.6 } },
                     { label: 'Eco Driver',
-                      params: { fuel_type: 'ICE', model_name: 'MG Hector', driver_profile: 'eco_driver', harsh_braking_per_trip: 0.5, idle_fraction: 0.05, overspeed_fraction: 0, battery_age_months: 12, short_trip_fraction: 0.05 } },
+                      params: { fuel_type: 'ICE', model_name: 'Hector', driver_profile: 'eco_driver', harsh_braking_per_trip: 0.5, idle_fraction: 0.05, overspeed_fraction: 0, battery_age_months: 12, short_trip_fraction: 0.05 } },
                     { label: 'Taxi Fleet',
-                      params: { fuel_type: 'ICE', model_name: 'MG Hector', driver_profile: 'taxi_fleet', odometer_km: 180000, days_owned: 1800, battery_age_months: 48, short_trip_fraction: 0.1 } },
+                      params: { fuel_type: 'ICE', model_name: 'Hector', driver_profile: 'taxi_fleet', odometer_km: 180000, days_owned: 1800, battery_age_months: 48, short_trip_fraction: 0.1 } },
                     { label: 'EV Heavy Fast Charge',
-                      params: { fuel_type: 'EV', model_name: 'MG ZS EV', driver_profile: 'urban_commuter', odometer_km: 80000, days_owned: 1200, fast_charge_fraction: 0.7, battery_soc_avg: 0.4, charge_cycle_count: 600, battery_age_months: 36, short_trip_fraction: 0.1 } },
+                      params: { fuel_type: 'EV', model_name: 'ZS EV', driver_profile: 'urban_commuter', odometer_km: 80000, days_owned: 1200, fast_charge_fraction: 0.7, battery_soc_avg: 0.4, charge_cycle_count: 600, battery_age_months: 36, short_trip_fraction: 0.1 } },
                   ].map(s => (
                     <button
                       key={s.label}

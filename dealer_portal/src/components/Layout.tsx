@@ -115,9 +115,16 @@ export default function Layout() {
       {toast && <GlobalToast t={toast} onClose={dismissToast} />}
       <GlobalProgressBar />
       <aside className="w-60 bg-slate-900 flex flex-col shrink-0">
-        <div className="px-5 py-5 border-b border-slate-700">
-          <h1 className="text-white text-lg font-bold tracking-tight">AutoPredict</h1>
-          <p className="text-slate-400 text-xs mt-0.5">{portalLabel}</p>
+        <div className="px-4 py-4 border-b border-slate-700 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0 shadow shadow-blue-900/50">
+            <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white">
+              <path d="M12 2C8 2 4 4 3 8L2 12h3l1-3h12l1 3h3l-1-4C20 4 16 2 12 2zm-4 4h8l1 2H7l1-2zM4 14v6h3v-2h10v2h3v-6H4zm2 2h12v2H6v-2z"/>
+            </svg>
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-white text-sm font-bold tracking-tight leading-none">AutoPredict</h1>
+            <p className="text-slate-400 text-xs mt-0.5 truncate">{portalLabel}</p>
+          </div>
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
