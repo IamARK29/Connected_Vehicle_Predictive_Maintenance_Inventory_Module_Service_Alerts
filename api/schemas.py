@@ -251,7 +251,11 @@ class InventoryItem(BaseModel):
 class DemandForecast(BaseModel):
     part_code:              str
     description:            str   = ""
+    category:               str   = "General"
+    demand_7d:              int   = 0
+    demand_15d:             int   = 0
     demand_30d:             int   = 0
+    demand_60d:             int   = 0
     demand_90d:             int   = 0
     confidence:             float = 0.5
     # Enriched fields

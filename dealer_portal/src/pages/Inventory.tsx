@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import {
   useInventoryOverview, useInventoryStock, useInventoryAlerts,
   useReorderPlan, useInventoryAnalytics, useDealerComparison,
-  usePartDetail, useInventoryTransactions,
+  usePartDetail, useInventoryTransactions, useDemandForecast,
 } from '../api/hooks'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -12,8 +12,8 @@ import {
 const _raw_dealer = localStorage.getItem('ap_dealer_code')
 const DEALER_CODE = (_raw_dealer && _raw_dealer !== 'ALL' && _raw_dealer !== 'NONE') ? _raw_dealer : undefined
 
-type Tab = 'Overview' | 'Stock Ledger' | 'Reorder Plan' | 'Analytics' | 'Multi-Dealer' | 'Transactions'
-const TABS: Tab[] = ['Overview', 'Stock Ledger', 'Reorder Plan', 'Analytics', 'Multi-Dealer', 'Transactions']
+type Tab = 'Overview' | 'Stock Ledger' | 'Reorder Plan' | 'Analytics' | 'Multi-Dealer' | 'Transactions' | 'Demand Forecast'
+const TABS: Tab[] = ['Overview', 'Stock Ledger', 'Reorder Plan', 'Analytics', 'Multi-Dealer', 'Transactions', 'Demand Forecast']
 
 const STATUS_CFG: Record<string, { bg: string; text: string; border: string; label: string }> = {
   STOCKOUT: { bg: 'bg-red-100',    text: 'text-red-800',    border: 'border-red-300',    label: 'Stockout' },
@@ -742,6 +742,240 @@ function TransactionsTab() {
   )
 }
 
+// ── Demand Forecast Tab ───────────────────────────────────────────────────────
+type Horizon = 7 | 15 | 30 | 60 | 90
+const HORIZONS: Horizon[] = [7, 15, 30, 60, 90]
+
+function categoryFromCode(partCode: string): string {
+  if (partCode.startsWith('OIL-') || partCode.startsWith('AIR-') || partCode.startsWith('SPARK-') || partCode.startsWith('COOLANT-') || partCode.startsWith('THERMOSTAT-')) return 'Engine'
+  if (partCode.startsWith('BR-')) return 'Brakes'
+  if (partCode.startsWith('TYRE-')) return 'Tyres'
+  if (partCode.startsWith('BATT-12V')) return 'Battery 12V'
+  if (partCode.startsWith('HV-') || partCode.startsWith('BMS-')) return 'EV / HV Battery'
+  return 'Other'
+}
+
+const TREND_CFG: Record<string, { cls: string; label: string; icon: string }> = {
+  rising:  { cls: 'text-red-600 bg-red-50',    label: 'Rising',  icon: '↑' },
+  falling: { cls: 'text-green-600 bg-green-50', label: 'Falling', icon: '↓' },
+  stable:  { cls: 'text-gray-600 bg-gray-50',   label: 'Stable',  icon: '→' },
+}
+const CATEG_COLORS: Record<string, string> = {
+  'Engine': '#3b82f6', 'Brakes': '#ef4444', 'Tyres': '#f59e0b',
+  'Battery 12V': '#8b5cf6', 'EV / HV Battery': '#10b981', 'Other': '#6b7280',
+}
+
+function DemandForecastTab() {
+  const dealerCode = DEALER_CODE ?? 'DLR001'
+  const { data: raw = [], isLoading } = useDemandForecast(dealerCode)
+  const parts = raw as any[]
+
+  const [horizon, setHorizon] = useState<Horizon>(30)
+  const [filterCat, setFilterCat] = useState<string>('All')
+
+  const demandKey = `demand_${horizon}d` as const
+
+  const enriched = useMemo(() => parts.map((p: any) => ({
+    ...p,
+    category: categoryFromCode(p.part_code),
+    demandForHorizon: p[demandKey] ?? Math.round((p.demand_30d / 30) * horizon),
+  })), [parts, demandKey, horizon])
+
+  const categories = useMemo(() => {
+    const cats = Array.from(new Set(enriched.map((p: any) => p.category)))
+    return ['All', ...cats]
+  }, [enriched])
+
+  const filtered = useMemo(() =>
+    filterCat === 'All' ? enriched : enriched.filter((p: any) => p.category === filterCat),
+    [enriched, filterCat])
+
+  // Category totals for the horizon
+  const catTotals = useMemo(() => {
+    const totals: Record<string, number> = {}
+    enriched.forEach((p: any) => {
+      totals[p.category] = (totals[p.category] ?? 0) + p.demandForHorizon
+    })
+    return Object.entries(totals).map(([cat, units]) => ({ cat, units })).sort((a, b) => b.units - a.units)
+  }, [enriched])
+
+  // Horizon comparison for total demand
+  const horizonTotals = useMemo(() =>
+    HORIZONS.map(h => ({
+      horizon: h,
+      label: `${h}D`,
+      total: parts.reduce((s: number, p: any) => s + (p[`demand_${h}d`] ?? Math.round((p.demand_30d / 30) * h)), 0),
+    })), [parts])
+
+  // Top 8 parts for chart
+  const top8 = useMemo(() => [...filtered].sort((a: any, b: any) => b.demandForHorizon - a.demandForHorizon).slice(0, 8), [filtered])
+
+  if (isLoading) return <div className="text-gray-400 text-sm p-8 text-center">Loading demand forecast…</div>
+  if (!parts.length) return (
+    <div className="card p-8 text-center">
+      <p className="text-gray-500 text-sm">No demand forecast data available.</p>
+      <p className="text-gray-400 text-xs mt-1">Ensure fleet data and service history are loaded.</p>
+    </div>
+  )
+
+  return (
+    <div className="space-y-6">
+      {/* Header + Horizon selector */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Spare Parts Demand Forecast</h2>
+          <p className="text-xs text-gray-500 mt-0.5">Fleet-interval + historical ML forecast · Dealer: {dealerCode}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 font-medium">Horizon:</span>
+          {HORIZONS.map(h => (
+            <button key={h} onClick={() => setHorizon(h)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                horizon === h ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+              }`}>
+              {h}D
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Horizon comparison cards */}
+      <div className="grid grid-cols-5 gap-3">
+        {horizonTotals.map(({ horizon: h, label, total }) => (
+          <button key={h} onClick={() => setHorizon(h as Horizon)}
+            className={`card text-center py-3 cursor-pointer transition-all ${horizon === h ? 'ring-2 ring-blue-500 bg-blue-50' : 'hover:shadow-md'}`}>
+            <p className={`text-2xl font-bold tabular-nums ${horizon === h ? 'text-blue-700' : 'text-gray-800'}`}>{total}</p>
+            <p className="text-xs text-gray-500 mt-0.5">units / {label}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Category bar chart + category filter */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="card lg:col-span-2">
+          <h3 className="font-semibold text-gray-900 mb-1">Top Parts — Next {horizon} Days</h3>
+          <p className="text-xs text-gray-500 mb-4">Predicted units needed from dealer stock</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={top8} layout="vertical" margin={{ left: 8, right: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
+              <YAxis type="category" dataKey="description" tick={{ fontSize: 9 }} width={140} />
+              <Tooltip formatter={(v: any) => [`${v} units`, 'Forecast']} />
+              <Bar dataKey="demandForHorizon" radius={[0, 3, 3, 0]}>
+                {top8.map((p: any, i: number) => (
+                  <Cell key={i} fill={CATEG_COLORS[p.category] ?? '#6b7280'} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* By category */}
+        <div className="card">
+          <h3 className="font-semibold text-gray-900 mb-3">By Category · {horizon}D</h3>
+          <div className="space-y-2">
+            {catTotals.map(({ cat, units }) => {
+              const maxUnits = catTotals[0]?.units ?? 1
+              return (
+                <div key={cat}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="font-medium text-gray-700">{cat}</span>
+                    <span className="tabular-nums text-gray-600">{units} units</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-1.5">
+                    <div className="h-1.5 rounded-full transition-all"
+                      style={{ width: `${(units / maxUnits) * 100}%`, background: CATEG_COLORS[cat] ?? '#6b7280' }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Category filter chips */}
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <p className="text-xs text-gray-500 mb-2 font-medium">Filter table by category</p>
+            <div className="flex flex-wrap gap-1.5">
+              {categories.map(cat => (
+                <button key={cat} onClick={() => setFilterCat(cat)}
+                  className={`text-xs px-2 py-1 rounded-full border font-medium transition-colors ${
+                    filterCat === cat ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+                  }`}
+                  style={filterCat === cat ? { background: CATEG_COLORS[cat] ?? '#3b82f6', borderColor: CATEG_COLORS[cat] ?? '#3b82f6' } : {}}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Full forecast table */}
+      <div className="card p-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-900">Forecast Detail — Next {horizon} Days</h3>
+            <p className="text-xs text-gray-500 mt-0.5">{filtered.length} parts · sorted by demand</p>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                {['Part', 'Category', '7D', '15D', '30D', '60D', '90D', 'Trend', 'Confidence', 'Method'].map(h => (
+                  <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.sort((a: any, b: any) => b.demandForHorizon - a.demandForHorizon).map((p: any, i: number) => {
+                const trend = TREND_CFG[p.demand_trend] ?? TREND_CFG.stable
+                const confPct = Math.round((p.confidence ?? 0.8) * 100)
+                return (
+                  <tr key={i} className="hover:bg-gray-50">
+                    <td className="px-3 py-2.5">
+                      <div className="text-xs font-medium text-gray-900">{p.description}</div>
+                      <div className="text-xs text-gray-400 font-mono">{p.part_code}</div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                        style={{ background: (CATEG_COLORS[p.category] ?? '#6b7280') + '22', color: CATEG_COLORS[p.category] ?? '#6b7280' }}>
+                        {p.category}
+                      </span>
+                    </td>
+                    {([7, 15, 30, 60, 90] as const).map(h => {
+                      const val = p[`demand_${h}d`] ?? Math.round((p.demand_30d / 30) * h)
+                      const isSelected = h === horizon
+                      return (
+                        <td key={h} className={`px-3 py-2.5 tabular-nums text-center font-bold ${isSelected ? 'text-blue-700 bg-blue-50' : 'text-gray-700'}`}>
+                          {val}
+                        </td>
+                      )
+                    })}
+                    <td className="px-3 py-2.5">
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${trend.cls}`}>
+                        {trend.icon} {trend.label}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1">
+                        <div className="w-12 bg-gray-200 rounded-full h-1.5">
+                          <div className="h-1.5 rounded-full bg-blue-500" style={{ width: `${confPct}%` }} />
+                        </div>
+                        <span className="text-xs tabular-nums text-gray-600">{confPct}%</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-gray-400">{p.forecast_method?.replace('_', '+')}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
   const [tab, setTab] = useState<Tab>('Overview')
@@ -784,12 +1018,13 @@ export default function Inventory() {
       </div>
 
       {/* Tab Content */}
-      {tab === 'Overview'      && <OverviewTab />}
-      {tab === 'Stock Ledger'  && <StockLedgerTab />}
-      {tab === 'Reorder Plan'  && <ReorderPlanTab />}
-      {tab === 'Analytics'     && <AnalyticsTab />}
-      {tab === 'Multi-Dealer'  && <MultiDealerTab />}
-      {tab === 'Transactions'  && <TransactionsTab />}
+      {tab === 'Overview'         && <OverviewTab />}
+      {tab === 'Stock Ledger'     && <StockLedgerTab />}
+      {tab === 'Reorder Plan'     && <ReorderPlanTab />}
+      {tab === 'Analytics'        && <AnalyticsTab />}
+      {tab === 'Multi-Dealer'     && <MultiDealerTab />}
+      {tab === 'Transactions'     && <TransactionsTab />}
+      {tab === 'Demand Forecast'  && <DemandForecastTab />}
     </div>
   )
 }

@@ -355,11 +355,17 @@ def _compute_demand_forecast(dealer_code: str) -> list[dict]:
             elif interval_demand_30d < hist_monthly * 0.8:
                 demand_trend = "falling"
 
+        daily = demand_30d / 30.0
+        demand_90d_final = max(demand_30d, demand_90d)
         forecasts.append({
             "part_code":             part_code,
             "description":           meta["description"],
+            "category":              meta.get("category", "General"),
+            "demand_7d":             max(0, round(daily * 7)),
+            "demand_15d":            max(0, round(daily * 15)),
             "demand_30d":            demand_30d,
-            "demand_90d":            max(demand_30d, demand_90d),
+            "demand_60d":            max(0, round(demand_30d * 2)),
+            "demand_90d":            demand_90d_final,
             "confidence":            confidence,
             "historical_monthly_avg": round(hist_monthly, 2),
             "alert_contribution":    alert_contrib,

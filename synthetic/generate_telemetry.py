@@ -637,7 +637,7 @@ class TelemetryGenerator:
             common.update({
                 "vehRPM":                 np.round(rpm).astype(int),
                 "FuelTankLevel":          np.round(np.full(n_sec, fuel_pct), 1),
-                "vehFuelConsumed":        np.round(np.cumsum(fuel_rate_l_s), 4),
+                "vehFuelConsumed":        np.round(np.cumsum(fuel_rate_l_s * dt), 4),
                 "vehOilPressureWarning":  oil_press_warn,
                 "vehMILWarning":          mil_warn,
             })

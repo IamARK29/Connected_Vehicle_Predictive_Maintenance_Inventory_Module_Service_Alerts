@@ -19,6 +19,20 @@ import pandas as pd
 from synthetic.config import SyntheticConfig, DRIVER_ARCHETYPES
 
 
+# Only read columns we actually use — reduces peak memory ~10× on large files
+_NEEDED_COLS = {
+    "vehSysPwrMod", "VehSysPwrMod",
+    "vehSpeed",     "VehSpeed",
+    "vehOdo",       "VehOdo",
+    "StartTime-TimeStamp",
+    "gnssLat",      "GNSSLat",
+    "gnssLong",     "GNSSLong",
+    "vehFuelConsumed", "VehFuelConsumed",
+    "vehBrakePos",  "VehBrakePos",
+    "vehSteeringAngle", "VehSteeringAngle",
+    "vehAccelPos",  "VehAccelPos",
+}
+
 # Drive-score component weights (must sum to 1.0)
 _SCORE_WEIGHTS = {
     "speed_compliance":  0.25,
@@ -42,7 +56,12 @@ def generate_trips(
     if fleet_df is None:
         fleet_df = pd.read_csv(data_dir / "fleet_master.csv")
 
-    all_trips: list[dict] = []
+    out_csv = data_dir / "trips.csv"
+    if out_csv.exists():
+        out_csv.unlink()
+
+    total_trips   = 0
+    header_written = False
 
     for _, vrow in fleet_df.iterrows():
         vin       = str(vrow["vin"])
@@ -53,16 +72,76 @@ def generate_trips(
             print(f"  [trips] WARNING: {tel_csv.name} not found, skipping")
             continue
 
-        df = pd.read_csv(tel_csv, low_memory=False)
-        trips = _extract_trips(df, vin, vrow, fuel_type)
-        all_trips.extend(trips)
-        print(f"  {vin}: {len(trips)} trips")
+        try:
+            avail = pd.read_csv(tel_csv, nrows=0).columns.tolist()
+            use_cols = [c for c in avail if c in _NEEDED_COLS]
+            file_mb = tel_csv.stat().st_size / (1024 * 1024)
+            if file_mb > 300:
+                trips = _extract_trips_chunked(tel_csv, use_cols, vin, vrow, fuel_type)
+            else:
+                df = pd.read_csv(tel_csv, usecols=use_cols, low_memory=False)
+                trips = _extract_trips(df, vin, vrow, fuel_type)
+        except Exception as exc:
+            print(f"  [trips] ERROR reading {tel_csv.name}: {exc}, skipping")
+            continue
+        n = len(trips)
+        print(f"  {vin}: {n} trips")
 
-    result = pd.DataFrame(all_trips)
-    out_csv = data_dir / "trips.csv"
-    result.to_csv(out_csv, index=False)
-    print(f"trips.csv: {len(result)} records -> {out_csv}")
-    return result
+        if n > 0:
+            chunk = pd.DataFrame(trips)
+            chunk.to_csv(out_csv, mode="a", index=False, header=not header_written)
+            header_written = True
+            total_trips += n
+
+    print(f"trips.csv: {total_trips} records -> {out_csv}")
+    return pd.read_csv(out_csv) if out_csv.exists() else pd.DataFrame()
+
+
+_CHUNKSIZE = 500_000  # rows per chunk for large files
+
+
+def _extract_trips_chunked(
+    tel_csv: Path, use_cols: list[str], vin: str, vrow: pd.Series, fuel_type: str
+) -> list[dict]:
+    """Memory-efficient trip extraction for large files via chunked reading.
+
+    Carries incomplete sessions across chunk boundaries so no trip is split.
+    Peak RAM = _CHUNKSIZE × len(use_cols) × ~8 bytes ≈ 40 MB.
+    """
+    trips: list[dict] = []
+    carry  = pd.DataFrame()
+
+    for chunk in pd.read_csv(tel_csv, usecols=use_cols, chunksize=_CHUNKSIZE, low_memory=False):
+        if not carry.empty:
+            chunk = pd.concat([carry, chunk], ignore_index=True)
+            carry = pd.DataFrame()
+
+        pwr_col = next((c for c in ("vehSysPwrMod", "VehSysPwrMod") if c in chunk.columns), None)
+        if pwr_col is None:
+            continue
+
+        running = ((chunk[pwr_col].fillna(0).astype(int)) == 2) | \
+                  ((chunk[pwr_col].fillna(0).astype(int)) == 3)
+
+        if running.iloc[-1]:
+            # Last row is mid-session: carry everything from the last "stopped" row onward
+            not_running = np.where(~running.to_numpy())[0]
+            if len(not_running) > 0:
+                split = int(not_running[-1]) + 1
+                carry = chunk.iloc[split:].copy()
+                chunk = chunk.iloc[:split]
+            else:
+                # Entire chunk is one unfinished session — carry all of it
+                carry = chunk.copy()
+                continue
+
+        if len(chunk) >= 5:
+            trips.extend(_extract_trips(chunk, vin, vrow, fuel_type))
+
+    if not carry.empty and len(carry) >= 5:
+        trips.extend(_extract_trips(carry, vin, vrow, fuel_type))
+
+    return trips
 
 
 def _extract_trips(df: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) -> list[dict]:
@@ -134,10 +213,14 @@ def _compute_trip(seg: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
     avg_speed = float(np.mean(speed[speed > 1])) if np.any(speed > 1) else 0.0
     max_speed = float(np.max(speed))
 
-    # Timestamps
+    # Timestamps + infer sample interval (dt) for fuel physics
+    dt = 1.0
     if ts_col:
         start_time = pd.to_datetime(seg[ts_col].iloc[0],  unit="s", utc=True).isoformat()
         end_time   = pd.to_datetime(seg[ts_col].iloc[-1], unit="s", utc=True).isoformat()
+        ts_arr = seg[ts_col].to_numpy(dtype=float)
+        if len(ts_arr) > 1:
+            dt = float(np.median(np.diff(ts_arr)))
     else:
         start_time = end_time = ""
 
@@ -147,11 +230,13 @@ def _compute_trip(seg: pd.DataFrame, vin: str, vrow: pd.Series, fuel_type: str) 
     end_lat    = float(seg[lat_col].iloc[-1]) if lat_col else 0.0
     end_long   = float(seg[lon_col].iloc[-1]) if lon_col else 0.0
 
-    # Fuel consumed (ICE/PHEV only)
+    # Fuel consumed (ICE/PHEV only) — derived from speed physics to be dt-independent.
+    # vehFuelConsumed telemetry was generated without the dt multiplier in older datasets,
+    # so computing from speed * base_fuel_rate * dt is always correct.
     fuel_consumed = 0.0
-    if fuel_col and fuel_type in ("ICE", "PHEV"):
-        fc = seg[fuel_col].fillna(0).to_numpy(dtype=float)
-        fuel_consumed = max(0.0, float(fc[-1] - fc[0]))
+    if fuel_type in ("ICE", "PHEV"):
+        base_l100km = float(vrow.get("base_fuel_l100km", 9.0)) if pd.notna(vrow.get("base_fuel_l100km")) else 9.0
+        fuel_consumed = float(np.sum(speed / 3600.0 * (base_l100km / 100.0) * dt))
     fuel_eff = round(fuel_consumed / trip_km * 100, 2) if trip_km > 0 and fuel_consumed > 0 else 0.0
 
     # Over-speed events
