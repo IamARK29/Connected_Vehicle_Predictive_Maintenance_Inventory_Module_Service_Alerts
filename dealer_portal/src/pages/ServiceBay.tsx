@@ -128,6 +128,7 @@ export default function ServiceBay() {
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-500">Next</label>
             <select
+              aria-label="Days ahead"
               value={daysAhead}
               onChange={e => setDaysAhead(Number(e.target.value))}
               className="border border-gray-300 rounded px-2 py-1 text-xs"
@@ -163,6 +164,7 @@ export default function ServiceBay() {
                 </td>
                 <td className="px-4 py-2.5">
                   <select
+                    aria-label={`Update status for ${a.vin}`}
                     value={a.status}
                     onChange={e => updateStatus.mutate({ id: a.appointment_id, status: e.target.value })}
                     className="text-xs border border-gray-300 rounded px-1.5 py-0.5"

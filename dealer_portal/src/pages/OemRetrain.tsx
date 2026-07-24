@@ -143,6 +143,7 @@ export default function OemRetrain() {
                 <div key={m.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50">
                   <input
                     type="checkbox"
+                    aria-label={m.label}
                     checked={selectedModels.includes(m.id)}
                     onChange={() => toggleModel(m.id)}
                     className="accent-blue-600 w-4 h-4 flex-shrink-0"
@@ -201,6 +202,7 @@ export default function OemRetrain() {
               Notes (optional)
             </label>
             <textarea
+              data-testid="retrain-notes"
               value={notes}
               onChange={e => setNotes(e.target.value)}
               rows={2}
@@ -216,6 +218,7 @@ export default function OemRetrain() {
 
           <div className="flex gap-2">
             <button
+              data-testid="retrain-submit"
               onClick={() => handleTrigger(selectedModels)}
               disabled={isPending || selectedModels.length === 0 || !!isJobActive}
               className="flex-1 bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
@@ -236,12 +239,14 @@ export default function OemRetrain() {
 
           <div className="flex gap-2">
             <button
+              data-testid="retrain-select-all"
               onClick={() => setSelectedModels(AVAILABLE_MODELS.map(m => m.id))}
               className="flex-1 border border-gray-200 text-gray-500 rounded-lg py-1.5 text-xs hover:bg-gray-50 transition-colors"
             >
               Select All
             </button>
             <button
+              data-testid="retrain-clear"
               onClick={() => setSelectedModels([])}
               className="flex-1 border border-gray-200 text-gray-500 rounded-lg py-1.5 text-xs hover:bg-gray-50 transition-colors"
             >

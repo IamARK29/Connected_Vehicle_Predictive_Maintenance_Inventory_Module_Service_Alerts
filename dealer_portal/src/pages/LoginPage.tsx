@@ -413,6 +413,7 @@ export default function LoginPage() {
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Username</label>
                 <input
+                  data-testid="login-username"
                   type="text"
                   value={username}
                   onChange={e => setUsername(e.target.value)}
@@ -425,6 +426,7 @@ export default function LoginPage() {
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
                 <input
+                  data-testid="login-password"
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
@@ -434,6 +436,7 @@ export default function LoginPage() {
                 />
               </div>
               <button
+                data-testid="login-submit"
                 type="submit"
                 disabled={loading}
                 className="w-full bg-blue-600 text-white rounded-xl py-3 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] disabled:opacity-50 transition-all shadow-md shadow-blue-600/20 mt-2"

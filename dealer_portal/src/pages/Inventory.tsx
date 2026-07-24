@@ -9,11 +9,16 @@ import {
   ResponsiveContainer, Cell, PieChart, Pie, LineChart, Line,
 } from 'recharts'
 
-const _raw_dealer = localStorage.getItem('ap_dealer_code')
-const DEALER_CODE = (_raw_dealer && _raw_dealer !== 'ALL' && _raw_dealer !== 'NONE') ? _raw_dealer : undefined
+function getAuthInfo() {
+  const raw = localStorage.getItem('ap_dealer_code')
+  return {
+    dealerCode: (raw && raw !== 'ALL' && raw !== 'NONE') ? raw : undefined,
+    isDealer: (localStorage.getItem('ap_role') ?? 'DEALER').toLowerCase() === 'dealer',
+  }
+}
 
 type Tab = 'Overview' | 'Stock Ledger' | 'Reorder Plan' | 'Analytics' | 'Multi-Dealer' | 'Transactions' | 'Demand Forecast'
-const TABS: Tab[] = ['Overview', 'Stock Ledger', 'Reorder Plan', 'Analytics', 'Multi-Dealer', 'Transactions', 'Demand Forecast']
+const ALL_TABS: Tab[] = ['Overview', 'Stock Ledger', 'Reorder Plan', 'Analytics', 'Multi-Dealer', 'Transactions', 'Demand Forecast']
 
 const STATUS_CFG: Record<string, { bg: string; text: string; border: string; label: string }> = {
   STOCKOUT: { bg: 'bg-red-100',    text: 'text-red-800',    border: 'border-red-300',    label: 'Stockout' },
@@ -121,6 +126,7 @@ function OverviewTab() {
 
 // ── Stock Ledger Tab ──────────────────────────────────────────────────────────
 function StockLedgerTab() {
+  const { dealerCode: DEALER_CODE } = getAuthInfo()
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [abcFilter, setAbcFilter]       = useState<string>('all')
   const [sortKey, setSortKey]           = useState<string>('stock_status')
@@ -306,6 +312,7 @@ function ErpModal({ order, onClose }: { order: any; onClose: () => void }) {
 
 // ── Reorder Plan Tab ──────────────────────────────────────────────────────────
 function ReorderPlanTab() {
+  const { dealerCode: DEALER_CODE } = getAuthInfo()
   const { data, isLoading } = useReorderPlan(DEALER_CODE)
   const [erpOrder, setErpOrder] = useState<any | null>(null)
   const plan = data as any
@@ -408,6 +415,7 @@ function ReorderPlanTab() {
 
 // ── Analytics Tab ─────────────────────────────────────────────────────────────
 function AnalyticsTab() {
+  const { dealerCode: DEALER_CODE } = getAuthInfo()
   const { data, isLoading } = useInventoryAnalytics(DEALER_CODE)
   const analytics = data as any
 
@@ -680,6 +688,7 @@ function MultiDealerTab() {
 
 // ── Transactions Tab ──────────────────────────────────────────────────────────
 function TransactionsTab() {
+  const { dealerCode: DEALER_CODE } = getAuthInfo()
   const [days, setDays] = useState(30)
   const params: Record<string, string> = { days: String(days) }
   if (DEALER_CODE) params.dealer_code = DEALER_CODE
@@ -766,7 +775,8 @@ const CATEG_COLORS: Record<string, string> = {
 }
 
 function DemandForecastTab() {
-  const dealerCode = DEALER_CODE ?? 'DLR001'
+  const { dealerCode: DEALER_CODE, isDealer: IS_DEALER_ROLE } = getAuthInfo()
+  const dealerCode = IS_DEALER_ROLE ? (DEALER_CODE ?? 'DL001') : 'ALL'
   const { data: raw = [], isLoading } = useDemandForecast(dealerCode)
   const { data: breakdown } = useDemandBreakdown(dealerCode)
   const parts = raw as any[]
@@ -980,8 +990,8 @@ function DemandForecastTab() {
         </div>
       </div>
 
-      {/* ── Per-Part Demand by Region / Dealer pivot ── */}
-      {partCodes.length > 0 && (
+      {/* ── Per-Part Demand by Region / Dealer pivot — OEM/admin only ── */}
+      {!IS_DEALER_ROLE && partCodes.length > 0 && (
         <div className="card p-5">
           {/* Header + view toggle */}
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1160,6 +1170,8 @@ function DemandForecastTab() {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
+  const { dealerCode: DEALER_CODE, isDealer: IS_DEALER_ROLE } = getAuthInfo()
+  const TABS = IS_DEALER_ROLE ? ALL_TABS.filter(t => t !== 'Multi-Dealer') : ALL_TABS
   const [tab, setTab] = useState<Tab>('Overview')
   const { data: ov } = useInventoryOverview()
   const alertCount = ov ? (ov.stockout_count + ov.critical_count + ov.low_count) : 0
@@ -1187,6 +1199,7 @@ export default function Inventory() {
         <div className="flex gap-0.5">
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)}
+              data-testid={`tab-${t.toLowerCase().replace(/ /g, '-')}`}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}>

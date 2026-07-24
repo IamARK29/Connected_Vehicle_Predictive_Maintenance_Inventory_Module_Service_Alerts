@@ -46,6 +46,7 @@ export default function Alerts() {
           <p className="text-gray-500 text-sm mt-1">{raw?.count ?? 0} total alerts in last {hours}h</p>
         </div>
         <button
+          data-testid="alerts-refresh"
           onClick={() => refetch()}
           className="text-sm text-blue-600 hover:text-blue-800 font-medium border border-blue-200 px-3 py-1.5 rounded-lg"
         >
@@ -60,6 +61,7 @@ export default function Alerts() {
           {SEVERITIES.map(s => (
             <button
               key={s}
+              data-testid={`filter-${s.toLowerCase()}`}
               onClick={() => setSeverity(s)}
               className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors border ${
                 severity === s
@@ -78,6 +80,8 @@ export default function Alerts() {
 
         {/* Hours filter */}
         <select
+          data-testid="alerts-hours"
+          aria-label="Time range"
           value={hours}
           onChange={e => setHours(Number(e.target.value))}
           className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs text-gray-600"

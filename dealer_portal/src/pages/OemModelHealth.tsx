@@ -138,7 +138,7 @@ function CorrelationHeatmap({ features, matrix }: { features: string[]; matrix: 
   const shortName = (f: string) => f.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).slice(0, 16)
 
   return (
-    <div className="overflow-auto max-h-[520px]">
+    <div className="overflow-auto max-h-[520px]" tabIndex={0}>
       {/* Column header row — vertical text avoids overlap */}
       <div className="flex" style={{ paddingLeft: labelW }}>
         {features.map((f, j) => (

@@ -93,6 +93,7 @@ export default function OemFleetOverview() {
           {GROUP_OPTIONS.map(opt => (
             <button
               key={opt.value}
+              data-testid={`group-by-${opt.value}`}
               onClick={() => setGroupBy(opt.value)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 groupBy === opt.value
@@ -159,8 +160,8 @@ export default function OemFleetOverview() {
                 label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                 labelLine={false}
               >
-                {pieData.map((_, i) => (
-                  <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                {pieData.map((entry, i) => (
+                  <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} aria-label={`${entry.name}: ${entry.value} vehicles`} />
                 ))}
               </Pie>
               <Tooltip />

@@ -178,6 +178,7 @@ export default function Layout() {
             </div>
           </div>
           <button
+            data-testid="sign-out-btn"
             onClick={handleLogout}
             className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
