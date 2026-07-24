@@ -67,3 +67,16 @@ data/feature_store/
 
 # Vite production build output
 dealer_portal/public/
+
+# Playwright — generated test artefacts (not source)
+dealer_portal/playwright-report/
+dealer_portal/test-results/
+dealer_portal/e2e/.auth/
+
+# Word temp/lock files
+~$*.docx
+
+# Doc-generation intermediate files (base64 blobs, not needed in repo)
+docs/diagrams/b64*.txt
+docs/diagrams/b64.json
+docs/diagrams/b64_web.json

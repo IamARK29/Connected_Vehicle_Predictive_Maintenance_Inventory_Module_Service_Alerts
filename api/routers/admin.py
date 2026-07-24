@@ -31,7 +31,7 @@ _BUILT_IN_USERS: dict[str, dict] = {
 
 
 def require_admin(current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
-    if current_user.get("role") not in ("ADMIN",):
+    if current_user.get("role") not in ("admin",):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
