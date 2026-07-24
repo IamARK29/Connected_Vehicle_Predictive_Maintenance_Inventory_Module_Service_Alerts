@@ -19,11 +19,23 @@ from typing import Annotated, Any
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.dependencies import get_current_user
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
+
+
+def _dealer_scope(user: dict, requested: str | None) -> str | None:
+    """Dealers can only see their own data; admin/oem can see any."""
+    if user.get("role") == "dealer":
+        return user.get("dealer_code") or requested
+    return requested
+
+
+def _require_admin_or_oem(user: dict) -> None:
+    if user.get("role") not in ("admin", "oem"):
+        raise HTTPException(status_code=403, detail="Admin or OEM access required")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data/synthetic"))
 
@@ -66,7 +78,8 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 async def inventory_overview(
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    df = _load_stock()
+    dealer_code = _dealer_scope(current_user, None)
+    df = _load_stock(dealer_code)
     if df.empty:
         return {"error": "Inventory data not generated. Run generate_inventory.py first."}
 
@@ -113,6 +126,7 @@ async def inventory_stock(
     part_code:    str | None = Query(None),
     limit:        int        = Query(500, ge=1, le=2000),
 ):
+    dealer_code = _dealer_scope(current_user, dealer_code)
     df = _load_stock(dealer_code)
     if df.empty:
         return []
@@ -154,6 +168,7 @@ async def inventory_alerts(
     min_severity: str        = Query("LOW", description="LOW|CRITICAL|STOCKOUT"),
     limit:        int        = Query(100, ge=1, le=500),
 ):
+    dealer_code = _dealer_scope(current_user, dealer_code)
     df = _load_stock(dealer_code)
     if df.empty:
         return []
@@ -198,6 +213,7 @@ async def reorder_plan(
     current_user: Annotated[dict, Depends(get_current_user)],
     dealer_code:  str | None = Query(None),
 ):
+    dealer_code = _dealer_scope(current_user, dealer_code)
     df = _load_stock(dealer_code)
     if df.empty:
         return {"orders": [], "total_cost_inr": 0}
@@ -253,6 +269,7 @@ async def inventory_analytics(
     current_user: Annotated[dict, Depends(get_current_user)],
     dealer_code:  str | None = Query(None),
 ):
+    dealer_code = _dealer_scope(current_user, dealer_code)
     df    = _load_stock(dealer_code)
     txn   = _load_transactions(dealer_code, days=90)
 
@@ -371,6 +388,7 @@ async def inventory_analytics(
 async def dealer_comparison(
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
+    _require_admin_or_oem(current_user)
     df = _load_stock()
     if df.empty:
         return []
@@ -408,7 +426,8 @@ async def part_detail(
     part_code:    str,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    df = _load_stock()
+    scoped_dc = _dealer_scope(current_user, None)
+    df = _load_stock(scoped_dc)
     if df.empty:
         return {}
 
@@ -471,6 +490,7 @@ async def recent_transactions(
     days:         int        = Query(30, ge=1, le=365),
     limit:        int        = Query(200, ge=1, le=1000),
 ):
+    dealer_code = _dealer_scope(current_user, dealer_code)
     df = _load_transactions(dealer_code, days=days)
     if df.empty:
         return []

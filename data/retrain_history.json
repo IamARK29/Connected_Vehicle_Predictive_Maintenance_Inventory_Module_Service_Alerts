@@ -1,5 +1,93 @@
 [
   {
+    "job_id": "retrain-20260723-102424-7c211c",
+    "triggered_by": "oem",
+    "trigger_type": "manual",
+    "started_at": "2026-07-23T10:24:24.232281+00:00",
+    "completed_at": null,
+    "duration_minutes": null,
+    "status": "queued",
+    "models": [
+      "brake_wear_rul",
+      "engine_oil_rul",
+      "tyre_wear_rul",
+      "battery_12v_rul"
+    ],
+    "training_samples": null,
+    "champion_promoted": [],
+    "notes": "Manually triggered from OEM portal"
+  },
+  {
+    "job_id": "retrain-20260723-101204-5fe7c4",
+    "triggered_by": "oem",
+    "trigger_type": "manual",
+    "started_at": "2026-07-23T10:12:04.239493+00:00",
+    "completed_at": null,
+    "duration_minutes": null,
+    "status": "queued",
+    "models": [
+      "brake_wear_rul",
+      "engine_oil_rul",
+      "tyre_wear_rul",
+      "battery_12v_rul"
+    ],
+    "training_samples": null,
+    "champion_promoted": [],
+    "notes": "Manually triggered from OEM portal"
+  },
+  {
+    "job_id": "retrain-20260723-095523-f5031b",
+    "triggered_by": "oem",
+    "trigger_type": "manual",
+    "started_at": "2026-07-23T09:55:23.135513+00:00",
+    "completed_at": "2026-07-23T09:55:32.496367+00:00",
+    "duration_minutes": null,
+    "status": "cancelled",
+    "models": [
+      "brake_wear",
+      "engine_oil",
+      "tyre_wear",
+      "battery_12v",
+      "hv_battery_soh",
+      "fuel_anomaly",
+      "driver_score",
+      "inventory_demand"
+    ],
+    "training_samples": null,
+    "champion_promoted": [],
+    "notes": "Manually triggered from OEM portal [Cancelled by user]"
+  },
+  {
+    "job_id": "retrain-20260723-095516-891dff",
+    "triggered_by": "oem",
+    "trigger_type": "manual",
+    "started_at": "2026-07-23T09:55:16.241263+00:00",
+    "completed_at": "2026-07-23T09:55:21.427194+00:00",
+    "duration_minutes": null,
+    "status": "cancelled",
+    "models": [
+      "engine_oil"
+    ],
+    "training_samples": null,
+    "champion_promoted": [],
+    "notes": "Individual retrain: Engine Oil [Cancelled by user]"
+  },
+  {
+    "job_id": "retrain-20260723-095500-51110d",
+    "triggered_by": "oem",
+    "trigger_type": "manual",
+    "started_at": "2026-07-23T09:55:00.053584+00:00",
+    "completed_at": "2026-07-23T09:55:06.757593+00:00",
+    "duration_minutes": null,
+    "status": "cancelled",
+    "models": [
+      "brake_wear"
+    ],
+    "training_samples": null,
+    "champion_promoted": [],
+    "notes": "Individual retrain: Brake Wear [Cancelled by user]"
+  },
+  {
     "job_id": "retrain-20260704-084001-a681ab",
     "triggered_by": "oem",
     "trigger_type": "manual",

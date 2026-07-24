@@ -27,6 +27,12 @@ router = APIRouter(prefix="/dealer", tags=["Dealer"])
 
 DATA_DIR = pathlib.Path(os.getenv("DATA_DIR", "data/synthetic"))
 
+
+def _assert_own_dealer(user: dict, dealer_code: str) -> None:
+    """Raise 403 if a dealer-role user is trying to access another dealer's data."""
+    if user.get("role") == "dealer" and user.get("dealer_code") != dealer_code:
+        raise HTTPException(status_code=403, detail="Access denied: you can only access your own dealer data")
+
 # Full parts metadata: service intervals, costs, ABC class, alert component mapping
 _PARTS_META: dict[str, dict] = {
     "OIL-5W30-4L": {
@@ -348,8 +354,8 @@ def _compute_demand_forecast(dealer_code: str) -> list[dict]:
             "history_months":            history_months,
         }
 
-        if _model_available:
-            # Use trained LightGBM model
+        if _model_available and dealer_code == "ALL":
+            # ML model was trained on fleet-wide totals; only use it for fleet-wide queries
             ml_result     = _inv_model.predict(features_dict)
             blended_30d   = ml_result["point_estimate"]
             method        = "ml_model"
@@ -546,6 +552,7 @@ async def get_appointments(
     current_user: Annotated[dict, Depends(get_current_user)],
     days_ahead: int = Query(7, ge=1, le=30),
 ):
+    _assert_own_dealer(current_user, dealer_code)
     appts = _get_appointments(dealer_code, days_ahead=days_ahead)
     result = []
     for a in appts:
@@ -583,6 +590,7 @@ async def create_appointment(
     payload:      AppointmentCreate,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
+    _assert_own_dealer(current_user, dealer_code)
     from agent.appointment_manager import AppointmentManager
     mgr = AppointmentManager()
 
@@ -627,6 +635,7 @@ async def update_appointment_status(
     payload:        AppointmentStatusUpdate,
     current_user:   Annotated[dict, Depends(get_current_user)],
 ):
+    _assert_own_dealer(current_user, dealer_code)
     valid_statuses = {"confirmed", "in_progress", "completed", "cancelled"}
     if payload.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"status must be one of: {sorted(valid_statuses)}")
@@ -665,6 +674,7 @@ async def bay_status(
     dealer_code:  str,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
+    _assert_own_dealer(current_user, dealer_code)
     from agent.appointment_manager import _LOCAL_BOOKINGS, _BAYS_PER_DEALER
 
     now      = datetime.now(timezone.utc)
@@ -721,6 +731,7 @@ async def inventory(
     dealer_code:  str,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
+    _assert_own_dealer(current_user, dealer_code)
     import pandas as pd
     stock_df = _load_inventory_stock(dealer_code)
 
@@ -799,6 +810,7 @@ async def demand_forecast(
     dealer_code:  str,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
+    _assert_own_dealer(current_user, dealer_code)
     rows = _compute_demand_forecast(dealer_code)
     return [DemandForecast(**r) for r in rows]
 
@@ -811,4 +823,11 @@ async def demand_breakdown(
     dealer_code:  str,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    return _compute_demand_breakdown()
+    _assert_own_dealer(current_user, dealer_code)
+    data = _compute_demand_breakdown()
+    if current_user.get("role") == "dealer":
+        # Dealers see only their own row in by_dealer; regional aggregates are omitted
+        own = data.get("by_dealer", {}).get(dealer_code, {})
+        data["by_dealer"] = {dealer_code: own} if own else {}
+        data["by_region"] = {}
+    return data

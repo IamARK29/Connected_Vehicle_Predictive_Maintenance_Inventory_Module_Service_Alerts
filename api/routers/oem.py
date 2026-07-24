@@ -40,7 +40,7 @@ RETRAIN_HISTORY_FILE = DATA_DIR.parent / "retrain_history.json"
 # ── Auth guard ─────────────────────────────────────────────────────────────────
 
 def require_oem(current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
-    if current_user.get("role") not in ("OEM", "ADMIN"):
+    if current_user.get("role") not in ("oem", "admin"):
         raise HTTPException(status_code=403, detail="OEM or Admin access required")
     return current_user
 
